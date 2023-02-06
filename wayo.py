@@ -110,7 +110,7 @@ class WayoPyBot(commands.Bot):
 
     async def login_pastebin(self):
         login_data = {
-            'api_dev_key': ; 'REDACTED',
+            'api_dev_key': 'REDACTED',
             'api_user_name': 'Wayoshi',
             'api_user_password': 'REDACTED',
         }

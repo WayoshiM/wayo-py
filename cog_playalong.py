@@ -43,7 +43,7 @@ async def get_gr_css(asession, logged_in, cookie_length):
             'http://www.golden-road.net/index.php?action=login2',
             data={
                 'user': 'Wayoshi',
-                'passwrd': 'mccauley12',
+                'passwrd': 'REDACTED',
                 'cookielength': cookie_length,
                 'hash_passwrd': '',
                 session_var: session_id,

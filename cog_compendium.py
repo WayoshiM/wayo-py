@@ -3,6 +3,7 @@ import logging
 import operator
 import re
 import string
+import traceback
 from datetime import *
 from functools import reduce
 from itertools import product, repeat
@@ -13,14 +14,21 @@ from typing import List, Optional, Union, Literal
 import discord
 import discord.ui as dui
 import polars as pl
+import polars.selectors as cs
 import portion as P
 from discord import app_commands
 from discord.ext import commands
-from humanize import ordinal
 from more_itertools import chunked, split_into, value_chain
 from sortedcontainers import SortedSet
 
-from compendium import COMPENDIUM_NOTES, CURRENT_SEASON, WheelCompendium, dl_season
+from compendium import COMPENDIUM_NOTES, CURRENT_SEASON, WheelCompendium
+from util_compendium import (
+    CompendiumDownloader,
+    build_puzzle_search_expr,
+    build_choices_search_expr,
+    build_sched_search_expr,
+    COL_NAME_REMAPPING,
+)
 from util import (
     NONNEGATIVE_INT,
     POSITIVE_INT,
@@ -30,63 +38,59 @@ from util import (
     send_long_mes,
     TimeConverter,
 )
-from util_expr import (
-    pretty_print_polars as ppp,
-    build_int_expression,
-    build_date_expression,
-    build_dt_q_expression,
-    transform_str_to_dts,
-)
+from util_expr import pretty_print_polars as ppp
 
 _log = logging.getLogger('wayo_log')
 
 SEASON_RANGE = commands.Range[int, 1, CURRENT_SEASON]
-SEASON_TYPE = SEASON_RANGE | Literal['primetime', 'kids', 'daytime']
-
-
-def ordinal_adjust(idx):
-    if idx > 0:
-        sub_cd = ordinal(idx)
-        idx -= 1
-    elif idx == 0:
-        raise ValueError('"Zeroth" is invalid.')
-    else:
-        sub_cd = ordinal(-idx) + '-to-last' if idx < -1 else 'last'
-    return idx, sub_cd
+PAGE_TYPE = SEASON_RANGE | Literal['primetime', 'kids', 'daytime', 'au', 'gb']
 
 
 def gen_compendium_submes(df: pl.DataFrame, time: str) -> str:
-    q = df.lazy().select(pl.exclude('^_.+$'))
+    if time == 'sched':
+        q = df.lazy()
+        drop = ['DATE']
 
-    bool_cols = [col for col, dtype in df.schema.items() if dtype is pl.Boolean]
+        if df.select((pl.col('THEME') == '').all()).item():
+            drop.append('THEME')
+        else:
+            q = q.with_columns(pl.col('THEME').fill_null(''))
+        q = q.drop(drop).rename({'DATE_STR': 'DATE'}).with_columns(pl.col('EP').cast(str).str.zfill(4))
+    else:
+        q = df.lazy().drop(cs.starts_with('_'))
 
-    if bool_cols:
-        sel = [pl.col(bool_cols).is_not().all()]
+        if any(v == pl.Boolean for v in df.schema.values()):
+            sel = [cs.by_dtype(pl.Boolean).not_().all()]
+            if time == 'syndicated':
+                # CLUE/BONUS all empty check
+                sel.append((cs.contains(('CLUE', 'BONUS')) == '').all())
+                # other non-bool col checks
+                for col in ('UC', 'RED', 'YELLOW', 'BLUE', 'THEME'):
+                    if col in df.columns:
+                        sel.append((pl.col(col) == '').all())
+
+            empty = q.clone().select(sel).collect()
+
+            exclude = [col for r, col in zip(empty.row(0), empty.columns) if r]
+            if exclude:
+                q = q.drop(exclude)
+
+            c_exprs = [
+                pl.when(pl.col(col)).then(pl.lit(col)).otherwise(pl.lit('')).alias(col)
+                for col, dtype in q.schema.items()
+                if dtype is pl.Boolean and col not in exclude
+            ]
+            if c_exprs:
+                q = q.with_columns(c_exprs)
+
+        wc = []
+        if time in ('syndicated', 'primetime'):
+            wc.append(pl.col('DATE').dt.strftime('%b %d %Y'))
         if time == 'syndicated':
-            sel.append((pl.col(q.columns[-1]).str.lengths() == 0).all())
+            wc.extend([pl.col('EP').cast(str).str.zfill(4), pl.col('E/S').cast(str).str.zfill(3)])
 
-        empty = q.clone().select(sel).collect()
-
-        exclude = [col for r, col in zip(empty.row(0), empty.columns) if r]
-        if exclude:
-            q = q.select(pl.exclude(exclude))
-
-        c_exprs = [
-            pl.when(pl.col(col)).then(pl.lit(col)).otherwise(pl.lit('')).alias(col)
-            for col, dtype in q.schema.items()
-            if dtype is pl.Boolean and col not in exclude
-        ]
-        if c_exprs:
-            q = q.with_columns(c_exprs)
-
-    wc = []
-    if time in ('syndicated', 'primetime'):
-        wc.append(pl.col('DATE').dt.strftime('%b %d %Y'))
-    if time == 'syndicated':
-        wc.extend([pl.col('EP').cast(str).str.zfill(4), pl.col('E/S').cast(str).str.zfill(3)])
-
-    if wc:
-        q = q.with_columns(wc)
+        if wc:
+            q = q.with_columns(wc)
 
     return ppp(q.collect())
 
@@ -143,41 +147,46 @@ class PlayFlags(SearchFlags):
     singlePlayer: bool = commands.flag(name='single_player', aliases=['single'], default=False)
 
 
-_col_name_remapping = {
-    'SEASON': 'S',
-    'EPISODE': 'EP',
-    'ES': 'E/S',
-    'ROUND': 'RD',
-    'CAT': 'CATEGORY',
-    'P': 'PUZZLE',
-    'CB': 'CLUE/BONUS',
-    'B': 'CLUE/BONUS',
-    'CLUE': 'CLUE/BONUS',
-    'BONUS': 'CLUE/BONUS',
-    'D': 'DATE',
-}
-
-_letters_mapping = {'CONSONANT': 'BCDFGHJKLMNPQRSTVWXYZ', 'ALL': string.ascii_uppercase}
-_word_regex = r"\b[A-Z-'\.]+\b"
-
-
 class CompendiumCog(commands.Cog, name='Compendium'):
     """https://buyavowel.boards.net/page/compendiumindex"""
 
     def __init__(self, bot):
         self.bot = bot
         self._debug = _log.getEffectiveLevel() == logging.DEBUG
-        try:
-            self.wc = WheelCompendium(loop=self.bot.loop, debug=self._debug)
-        except ValueError as e:
-            self.wc = None
-            _log.error(f'loading wc failed! {e}')
+        self.wc = None
+        self.wcd = CompendiumDownloader(bot.asession)
 
     async def cog_load(self):
         self.guint_user = await self.bot.fetch_user(688572894036754610)
+        self.cstaff_channel = await self.bot.fetch_channel(1025933082194354358)
 
-    async def cog_check(self, ctx):
-        return self.wc and all(v is not None for v in self.wc.dfs.values())
+    async def cog_before_invoke(self, ctx):
+        if not (self.wc and all(v is not None for v in self.wc.dfs.values())):
+            try:
+                self.wc = WheelCompendium(loop=self.bot.loop, debug=self._debug)
+
+                wait = 0
+                m = None
+                while not self.wc.loaded:
+                    await asyncio.sleep(1)
+                    wait += 1
+                    if wait == 2:
+                        m = await ctx.send('`I am loading the compendium, just a moment...`')
+                if m:
+                    await m.delete()
+
+                if self.wc.sanity_checks:
+                    await self.send_sanity()
+            except ValueError as e:
+                self.wc = None
+                await ctx.send('`Loading the Wheel Compendum failed. Try to have a verified user refresh.`')
+                _log.error(f'loading wc failed! {e}')
+
+    async def send_sanity(self):
+        s = 'There are some inconsistencies when loading, please fix ASAP:\n\n'
+        s += '\n'.join(f'- {sc}' for sc in self.wc.sanity_checks)
+        await send_long_mes(self.cstaff_channel, s, fn='sanity_check.txt')
+        self.wc.sanity_checks.clear()
 
     # bases
 
@@ -191,308 +200,80 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
     @wheelcompendium.command(aliases=['r'], with_app_command=False)
     @commands.check(compendium_admin_check)
-    async def refresh(self, ctx, seasons: commands.Greedy[SEASON_TYPE]):
-        """Redownload compendium data from the given syndicated seasons (all seasons if not provided) and update wayo.py's version of the compendium.
+    async def refresh(self, ctx, pages: commands.Greedy[PAGE_TYPE]):
+        """Redownload compendium data from the given syndicated seasons and update wayo.py's version of the compendium.
+
+        Primetime also downloads the BR choices and does a sanity check. Same for syndicated if any season > 35.
 
         Only Wayoshi, dftackett, 9821, Kev347, and Thetrismix can currently run this command."""
-        if not seasons:
-            seasons = range(1, CURRENT_SEASON + 1)
+        if not 1 <= len(pages) <= 5:
+            raise ValueError('Currently, must provide between 1 and 5 pages at a time, for load management purposes.')
         await ctx.message.add_reaction('🚧')
         try:
-            await asyncio.gather(*(dl_season(s, self.bot.asession) for s in seasons))
-            await self.wc.load(seasons)
+            # this could be done more programmatically, but fine for now
+            syn_seasons = {s for s in pages if type(s) is int and s >= 35}
+            if syn_seasons & {*range(1, 11)}:
+                pages.append('sched10')
+            if syn_seasons & {*range(11, 21)}:
+                pages.append('sched20')
+            if syn_seasons & {*range(21, 31)}:
+                pages.append('sched30')
+            if syn_seasons & {*range(31, 41)}:
+                pages.append('sched40')
+                pages.append('choices40')
+            if syn_seasons & {*range(41, 51)}:
+                pages.append('sched50')
+                pages.append('choices50')
+
+            await asyncio.gather(*(self.wcd.dl_page(p) for p in pages))
+            await self.wc.load(pages)
             await ctx.message.remove_reaction('🚧', ctx.bot.user)
-            await ctx.message.add_reaction('✅')
+            if self.wc.sanity_checks:
+                await self.send_sanity()
+                await ctx.message.add_reaction('⚠')
+            else:
+                await ctx.message.add_reaction('✅')
         except Exception as e:
             await ctx.send(f'Error refreshing: {e}')
             await ctx.message.remove_reaction('🚧', ctx.bot.user)
             await ctx.message.add_reaction('❌')
+            if self._debug:
+                traceback.print_exception(e)
             return
 
         if not self._debug:
             try:
-                await self.guint_user.send(f'{ctx.author.name} refreshed {seasons} at {datetime.now()}')
+                await self.guint_user.send(f'{ctx.author.name} refreshed {pages} at {datetime.now()}')
             except:
                 pass
-
-    def search_inner(self, options):
-        f_exprs = []
-        cond_descriptions = []
-
-        if len(options.conditions) > 26:
-            raise ValueError("Too many conditions given, max is 26. (You shouldn't need close to this many!)")
-        # if options.time not in ('syndicated', 'primetime'):
-        # raise ValueError('Only syndicated & primetime supported at the moment.')
-
-        for cond in options.conditions:
-            words = [w.strip().upper() for w in cond.split(';')]
-
-            match words:
-                case ['BONUS' | 'B']:
-                    if options.time in ('primetime', 'kids', 'gb'):
-                        raise ValueError(f'BONUS is invalid in {options.time}.')
-
-                    col = 'BONUS' if options.time in ('daytime', 'au') else 'CLUE/BONUS'
-
-                    f = (pl.col(col).str.lengths() > 0) & (~pl.col('CATEGORY').cast(str).str.contains('CROSSWORD'))
-                    cd = 'has a bonus'
-                case ['BONUS' | 'B' as col, '1' | '0' | 'YES' | 'NO' | 'Y' | 'N' | 'T' | 'F' | 'TRUE' | 'FALSE' as b]:
-                    if options.time in ('primetime', 'kids', 'gb'):
-                        raise ValueError(f'BONUS is invalid in {options.time}.')
-
-                    col = 'BONUS' if options.time in ('daytime', 'au') else 'CLUE/BONUS'
-                    b = re.match('[1YT]', b)
-
-                    f = (pl.col('BONUS').str.lengths() > 0) & (~pl.col('CATEGORY').cast(str).str.contains('CROSSWORD'))
-                    if not b:
-                        f = f.is_not()
-                    cd = 'has a bonus' if b else 'does not have a bonus'
-                case [
-                    'PUZZLE'
-                    | 'P'
-                    | 'CLUE/BONUS'
-                    | 'CLUE'
-                    | 'BONUS'
-                    | 'CB'
-                    | 'B'
-                    | 'RD'
-                    | 'R'
-                    | 'ROUND'
-                    | 'CAT'
-                    | 'CATEGORY' as col,
-                    lit,
-                    'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as p_q,
-                ]:
-                    col = _col_name_remapping.get(col, col)
-                    if col == 'CLUE/BONUS':
-                        if options.time in ('primetime', 'kids', 'gb'):
-                            raise ValueError(f'{col} is invalid in {options.time}.')
-                        elif options.time in ('daytime', 'au'):
-                            col = 'BONUS'
-
-                    if p_q.startswith('L'):
-                        f = pl.col(col).str.contains(lit, literal=True)
-                        cd = f'{col} contains "{lit}"'
-                    else:
-                        f = pl.col(col).str.contains(f'^{lit}$')
-                        cd = f'{col} is exactly "{lit}"'
-                case ['PUZZLE' | 'P' | 'CLUE/BONUS' | 'CLUE' | 'BONUS' | 'CB' | 'B' as col, regex, *e]:
-                    col = _col_name_remapping.get(col, col)
-                    if col == 'CLUE/BONUS':
-                        if options.time in ('primetime', 'kids', 'gb'):
-                            raise ValueError(f'{col} is invalid in {options.time}.')
-                        elif options.time in ('daytime', 'au'):
-                            col = 'BONUS'
-
-                    if options.time == 'primetime' and col != 'PUZZLE':
-                        raise ValueError(f'{col} is invalid in primetime.')
-                    regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
-
-                    if e:
-                        f, cd, p = build_int_expression(pl.col(col).str.count_match(regex), e)
-                        cd = f'{col} matches "{regex}" {cd} time' + ('s' if p else '')
-                    else:
-                        f = pl.col(col).str.contains(regex)
-                        cd = f'{col} matches "{regex}"'
-                case ['RD' | 'ROUND' | 'R' | 'CAT' | 'CATEGORY' as col, regex]:
-                    col = _col_name_remapping.get(col, col)
-                    regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
-                    if col == 'CATEGORY' and ':tm:' in col:
-                        regex = regex.replace(':tm:', '™️')
-
-                    f = pl.col(col).cast(str).str.contains(regex)
-                    cd = f'{col} matches "{regex}"'
-                case ['PUZZLE/EP' | 'PUZ/EP' | 'P/E' | 'PE', idx]:
-                    idx, sub_cd = ordinal_adjust(int(idx))
-                    f = pl.col('RD') == pl.col('RD').cast(str).list().over(pl.col('DATE')).arr.get(idx)
-                    cd = f'PUZZLE is the {sub_cd} of EP (DATE)'
-                case ['SEASON' | 'S' | 'EPISODE' | 'EP' | 'ES' | 'E/S' as col, *e]:
-                    col = _col_name_remapping.get(col, col)
-                    if options.time != 'syndicated' and not (options.time == 'primetime' and col == 'EP'):
-                        raise ValueError(f'{col} is invalid in {options.time}.')
-
-                    f, cd, _ = build_int_expression(pl.col(col), e)
-                    cd = f'{col} is {cd}'
-                case ['HH', 'A' | 'B' as hh]:
-                    if options.time != 'primetime':
-                        raise ValueError('HH is only valid in primetime.')
-                    f = pl.col('HH') == hh
-                    cd = f'HH is {hh}'
-                case [
-                    'DATE' | 'D' as col,
-                    'YEAR' | 'Y' | 'MONTH' | 'M' | 'DAY' | 'D' | 'DOW' | 'WKDAY' | 'WEEKDAY' as dt_q,
-                    *e,
-                ]:
-                    if options.time in ('kids', 'daytime', 'au', 'gb'):
-                        raise ValueError(f'DATE is too incomplete to search specifics on for {options.time}.')
-                    col = _col_name_remapping.get(col, col)
-                    f, cd = build_dt_q_expression(col, dt_q, e)
-                case ['DATE' | 'D' as col, *e]:
-                    col = _col_name_remapping.get(col, col)
-                    if options.time in ('kids', 'daytime', 'au', 'gb'):
-                        regex = ' '.join(e)
-                        f = pl.col(col).str.contains(regex)
-                        cd = f'{col} matches "{regex}"'
-                    else:
-                        e = transform_str_to_dts(e, options.dateFormat)
-                        f, cd = build_date_expression(pl.col(col), e, options.dateFormat)
-                        cd = f'{col} is {cd}'
-                case ['LENGTH' | 'LC' | 'L', *e]:
-                    f, cd, _ = build_int_expression(pl.col('PUZZLE').str.extract_all('[A-Z]').arr.lengths(), e)
-                    cd = f'length is {cd}'
-                case ['LENGTH_UNIQUE' | 'LCU' | 'LU', *e]:
-                    f, cd, _ = build_int_expression(pl.col('PUZZLE').str.extract_all('[A-Z]').arr.unique().arr.lengths(), e)
-                    cd = f'total number of unique letters is {cd}'
-                case ['COUNT' | 'C' | 'COUNT_UNIQUE' | 'CU' as col, letters, *e]:
-                    if letters in _letters_mapping:
-                        letters = _letters_mapping[letters]
-                    elif not re.match('[A-Z]+', letters) or not len(set(letters)) == len(letters):
-                        raise ValueError(f'Malformed letter string (must be all A-Z and all unique): {letters}')
-
-                    base_expr = pl.col('PUZZLE').str.extract_all('[A-Z]')
-                    if 'U' in col:
-                        base_expr = base_expr.arr.unique()
-                        extra = ' unique'
-                    else:
-                        extra = ''
-
-                    f, cd, _ = build_int_expression(
-                        base_expr.arr.eval(pl.element().is_in(list(letters)), parallel=True).arr.sum(),
-                        e,
-                    )
-                    cd = f'total{extra} number of {letters} is {cd}'
-                case ['WORD_COUNT' | 'WC', *e]:
-                    f, cd, _ = build_int_expression(pl.col('PUZZLE').str.count_match(_word_regex), e)
-                    cd = f'total word count is {cd}'
-                case ['WORD' | 'W', regex]:
-                    regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
-                    f = (
-                        pl.col('PUZZLE')
-                        .str.extract_all(_word_regex)
-                        .arr.eval(pl.element().str.contains(regex), parallel=True)
-                        .arr.contains(True)
-                    )
-                    cd = f'any word matches "{regex}"'
-                case ['WORD' | 'W', word, 'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as w_q]:
-                    if w_q.startswith('L'):
-                        f = (
-                            pl.col('PUZZLE')
-                            .str.extract_all(_word_regex)
-                            .arr.eval(pl.element().str.contains(word, literal=True), parallel=True)
-                            .arr.contains(True)
-                        )
-                        cd = f'any word contains "{word}"'
-                    else:
-                        f = pl.col('PUZZLE').str.extract_all(_word_regex).arr.contains(word)
-                        cd = f'any word is exactly "{word}"'
-                case ['WORD' | 'W', regex, idx]:
-                    idx = int(idx)
-                    if idx > 0:
-                        sub_cd = ordinal(idx)
-                        idx -= 1
-                    elif idx == 0:
-                        raise ValueError('Zeroth word is not defined.')
-                    else:
-                        sub_cd = ordinal(-idx) + '-to-last' if idx < -1 else 'last'
-                    regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
-
-                    f = pl.col('PUZZLE').str.extract_all(_word_regex).arr.get(idx).str.contains(regex)
-                    cd = f'{sub_cd} word matches "{regex}"'
-                case ['WORD' | 'W', word, 'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as w_q, idx]:
-                    idx, sub_cd = ordinal_adjust(int(idx))
-
-                    base_expr = pl.col('PUZZLE').str.extract_all(_word_regex).arr.get(idx)
-
-                    if w_q.startswith('L'):
-                        f = base_expr.str.contains(word, literal=True)
-                        cd = f'{sub_cd} word contains "{word}"'
-                    else:
-                        f = base_expr == word
-                        cd = f'{sub_cd} word is exactly "{word}"'
-                case ['MULT' | 'M', letters, mults, *e]:
-                    if letters in _letters_mapping:
-                        letters = _letters_mapping[letters]
-                    elif not re.match('[A-Z]+', letters) or not len(set(letters)) == len(letters):
-                        raise ValueError(f'Malformed letter string (must be all A-Z and all unique): {letters}')
-
-                    try:
-                        _, mult_cd, _ = build_int_expression(pl.col('DUMMY'), [mults], mult_hybrid=True)
-                    except KeyError:
-                        raise ValueError('All multiples must be between 1 (single) and 12 (dodecuple).')
-
-                    if not e:
-                        e = ['>=1']
-
-                    f, cd, _ = build_int_expression(
-                        pl.col('_lc')
-                        .arr.eval(
-                            (pl.element().struct.field('').is_in(list(letters)))
-                            & (build_int_expression(pl.element().struct.field('counts'), [mults], expr_only=True)),
-                            parallel=True,
-                        )
-                        .arr.sum(),
-                        e,
-                    )
-                    cd = f'number of {mult_cd} of "{letters}" is {cd}'
-                case ['UC' | 'PP' | 'PR' | 'RL' as col]:
-                    if options.time != 'syndicated' and not (
-                        (options.time == 'primetime' and col == 'PP') or (options.time == 'gb' and col == 'PR')
-                    ):
-                        raise ValueError(f'{col} is invalid in {options.time}.')
-                    f = pl.col(col)
-                    cd = f'is a {col} puzzle'
-                case [
-                    'UC' | 'PP' | 'PR' | 'RL' as col,
-                    '1' | '0' | 'YES' | 'NO' | 'Y' | 'N' | 'T' | 'F' | 'TRUE' | 'FALSE' as b,
-                ]:
-                    if options.time != 'syndicated' and not (
-                        (options.time == 'primetime' and col == 'PP') or (options.time == 'gb' and col == 'PR')
-                    ):
-                        raise ValueError(f'{col} is invalid in {options.time}.')
-
-                    b = re.match('[1YT]', b)
-
-                    f = pl.col(col) if b else pl.col(col).is_not()
-                    cd = f'is a {col} puzzle' if b else f'is not a {col} puzzle'
-                case _:
-                    raise ValueError(f'Malformed condition: {cond}')
-
-            f_exprs.append(f)
-            cond_descriptions.append(cd)
-
-        if options.logicExpr == 'all':
-            total_expr = pl.all(f_exprs)
-            expr_str = ' all of'
-        elif options.logicExpr == 'any':
-            total_expr = pl.any(f_exprs)
-            expr_str = ' any of'
-        else:
-            l = locals()
-            l |= {letter: fe for fe, letter in zip(f_exprs, string.ascii_uppercase)}
-            total_expr = eval(re.sub('([A-Z])', r'(\1)', options.logicExpr))
-            expr_str = f'\n{options.logicExpr}; where'
-
-        return self.wc.dfs[options.time].filter(total_expr).collect(), expr_str, cond_descriptions
 
     @wheelcompendium.command(aliases=['s'], with_app_command=False)
     async def search(self, ctx, *, options: SearchFlags):
         """Lists every puzzle in the compendium that matches a set of conditions.
 
-        If 'all' is given to logicExpr (short for logical expression), all the conditions must match. If 'any' is given, at least one condition must match. Custom logic expressions are also allowed, see the pastebin for more details.
+        If 'all' is given to logicExpr (short for logical expression), all the conditions must match. If 'any' is given, at least one condition must match. Custom logic expressions are also allowed, see the FAQ for more details.
 
-        Each condition is a set of "words", separated by a semicolon. See the pastebin for exact formatting details.
+        Each condition is a set of "words", separated by a semicolon. See the FAQ for exact formatting details.
 
         The "output" is by default the usual full table output of matching rows. You can specify one of the following instead:
         -"CATEGORY", "CAT", "ROUND, "RD", "R": Category or Round frequency table. All seasons & categories/rounds with all zeros (columns/rows) will be automatically omitted. The number of columns is determined by an additional "by" parameter, separated by a semicolon like a condition, determining how many seasons to sum up in one column.
         -"PUZZLE", "P": Puzzle frequency list. Simple listing of every puzzle that occurs at least N (default 2) times in the result. N can be supplied just like "by" above.
 
-        The dataset used is specified by the "time" parameter. Currently only "syndicated" is supported."""
+        The dataset used is specified by the "time" parameter."""
 
         if not options.conditions:
             raise ValueError('At least one condition required.')
 
         async with ctx.typing():
-            sub_df, expr_str, cond_descriptions = await asyncio.to_thread(self.search_inner, options)
+            total_expr, expr_str, cond_descriptions, join = build_puzzle_search_expr(options)
+
+            match join:
+                case 'sched':
+                    df = self.wc.join_cache['sched']
+                case _:
+                    df = self.wc.dfs[options.time]
+
+            sub_df = await asyncio.to_thread(df.filter(total_expr).collect)
             # _log.debug(f'\n{sub_df}')
             plural = 's' if sub_df.height != 1 else ''
 
@@ -528,38 +309,39 @@ class CompendiumCog(commands.Cog, name='Compendium'):
             if sub_df.height:
                 match options.output.upper().split(';'):
                     case ['RD' | 'ROUND' | 'R' | 'CAT' | 'CATEGORY' as col, *by]:
+                        col = COL_NAME_REMAPPING.get(col, col)
+
                         if options.time != 'syndicated':
                             raise ValueError('RD/CAT season chart only applicable in syndicated.')
 
-                        season_range = tuple(sub_df.select(pl.col('S').unique(True)).to_series())
+                        season_range = tuple(sub_df.select(pl.col('S').unique(maintain_order=True)).to_series())
 
                         by = int(by[0]) if by else 1
                         if by < 0:
                             raise ValueError(f'{by} must be non-negative.')
 
                         s_chunks = list(chunked(season_range, by))
-                        col = _col_name_remapping.get(col, col)
 
                         vc = (
                             sub_df.lazy()
-                            .groupby(col)
+                            .group_by(col)
                             .agg(pl.col('S').value_counts(sort=True))
                             .collect()
                             .lazy()
                             .select(
-                                [pl.col(col).cast(str)]
-                                + [
+                                pl.col(col).cast(str),
+                                *[
                                     pl.col('S')
-                                    .arr.eval(
-                                        pl.when(pl.element().struct.field('').is_in(list(s)))
+                                    .list.eval(
+                                        pl.when(pl.element().struct.field('S').is_in(list(s)))
                                         .then(pl.element().struct.field('counts'))
                                         .otherwise(0),
                                         parallel=True,
                                     )
-                                    .arr.sum()
+                                    .list.sum()
                                     .alias(season_portion_str_2(s))
                                     for s in s_chunks
-                                ]
+                                ],
                             )
                             .sort(col)
                         )
@@ -568,28 +350,32 @@ class CompendiumCog(commands.Cog, name='Compendium'):
                         cov_pct = self.wc.calc_coverage(season_range).select(pl.col('PCT').tail(1)).item()
 
                         if len(s_chunks) > 1:
-                            vc = vc.with_columns(pl.sum(pl.exclude(col)).alias('ALL'))
+                            vc = vc.with_columns(pl.sum_horizontal(pl.exclude(col)).alias('ALL'))
 
                         df = vc.collect()
 
                         if df.height > 1:
-                            total = df.select([pl.lit('ALL').alias(col)] + [pl.sum(c) for c in df.columns[1:]])
+                            total = df.select(pl.lit('ALL').alias(col), *[pl.sum(c) for c in df.columns[1:]])
                             df.vstack(total, in_place=True)
-                            ss = df.to_pandas().to_string(index=False).replace(col, ''.join(repeat(' ', len(col))))
+                            ss = ppp(df).replace(col, ''.join(repeat(' ', len(col))))
 
                             # lift from cog_lineup slots
                             sss = ss.split('\n')
-                            last_S_label = df.columns[-2]
-                            sss[0] = sss[0].replace(last_S_label + ' ', last_S_label + ' | ')
-                            j = sss[0].rindex('|')
-                            for i in range(1, len(sss)):
-                                sss[i] = sss[i][: j - 1] + ' | ' + sss[i][j:]
                             extra_line = ''.join(repeat('-', len(sss[0])))
-                            extra_line = extra_line[:j] + '|' + extra_line[j + 1 :]
+
+                            if len(s_chunks) > 1:
+                                last_S_label = df.columns[-2]
+                                sss[0] = sss[0].replace(last_S_label + ' ', last_S_label + ' | ')
+                                j = sss[0].rindex('|')
+                                for i in range(1, len(sss)):
+                                    sss[i] = sss[i][: j - 1] + ' | ' + sss[i][j:]
+                                # extra two -'s needed due to replace above
+                                extra_line = extra_line[:j] + '|' + extra_line[j + 1 :] + '--'
+
                             sss.insert(len(sss) - 1, extra_line)
                             ssss = '\n'.join(sss)
                         else:
-                            ssss = df.to_pandas().to_string(index=False).replace(col, ''.join(repeat(' ', len(col))))
+                            ssss = ppp(df).replace(col, ''.join(repeat(' ', len(col))))
 
                         total_str += f'{col} FREQUENCY TABLE, {season_portion_str_2(season_range)} ({by}) ({cov_pct:.1f}% COV)\n\n{ssss}'
                     case ['PUZZLE' | 'P', *n]:
@@ -599,28 +385,115 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
                         vc = (
                             sub_df.lazy()
-                            .select(pl.col('PUZZLE').value_counts(True, True))
+                            .select(pl.col('PUZZLE').value_counts(sort=True, parallel=True))
                             .unnest('PUZZLE')
                             .filter(pl.col('counts') >= n)
-                            .select([pl.col('counts').alias('N'), pl.col('PUZZLE')])
-                            .select(pl.all().sort_by(['N', 'PUZZLE'], [True, False]))
+                            .select(pl.col('counts').alias('N'), pl.col('PUZZLE'))
+                            .sort('N', 'PUZZLE', descending=(True, False))
                         )
 
-                        nc = vc.select(pl.col('N').value_counts(True, True)).reverse().collect()
+                        nc = vc.select(pl.col('N').value_counts(sort=True, parallel=True)).reverse().collect()
 
                         if nc.height:
                             total_str += (
                                 'PUZZLE FREQUENCY LIST: '
                                 + (', '.join(f'{d[0]["counts"]} {d[0]["N"]}x' for d in nc.rows()))
                                 + '\n\n'
-                                + str(
-                                    vc.collect().to_pandas().to_string(index=False, formatters={'PUZZLE': lambda s: f' {s}'})
-                                )
+                                + ppp(vc.collect())
                             )
                         else:
                             total_str += f'`PUZZLE FREQUENCY: No puzzles that occurred more than {n} times.`'
                     case _:
                         total_str += gen_compendium_submes(sub_df, options.time)
+            else:
+                total_str = description_str
+
+        await send_long_mes(ctx, total_str)
+
+    @wheelcompendium.command(aliases=['sc'], with_app_command=False)
+    async def search_choices(self, ctx, *, options: SearchFlags):
+        """Lists every set of BR choices in the compendium that matches a set of conditions.
+
+        If 'all' is given to logicExpr (short for logical expression), all the conditions must match. If 'any' is given, at least one condition must match. Custom logic expressions are also allowed, see the FAQ for more details.
+
+        Each condition is a set of "words", separated by a semicolon. See the FAQ for exact formatting details.
+
+        The "output" is the usual full table output of matching rows. No other output type is supported at this time.
+
+        The dataset used is specified by the "time" parameter (syndicated and primetime only)."""
+
+        if not options.conditions:
+            raise ValueError('At least one condition required.')
+        elif options.time not in ('syndicated', 'primetime'):
+            raise ValueError('Invalid time for this search table.')
+
+        async with ctx.typing():
+            total_expr, expr_str, cond_descriptions = build_choices_search_expr(options)
+            sub_df = await asyncio.to_thread(self.wc.df_choices[options.time].filter(total_expr).collect)
+            # _log.debug(f'\n{sub_df}')
+            plural = 's' if sub_df.height != 1 else ''
+
+            if options.time == 'syndicated':
+                description_str = f'{sub_df.height} BR{plural} found in {options.time.upper()} (S35+) for'
+            else:
+                description_str = f'{sub_df.height} BR{plural} found in {options.time.upper()} for'
+
+            if len(cond_descriptions) > 1:
+                description_str += f'{expr_str}\n\n'
+                if expr_str.endswith('where'):
+                    description_str += '\n'.join([f'{l} = {cd}' for cd, l in zip(cond_descriptions, string.ascii_uppercase)])
+                else:
+                    description_str += '\n'.join([f'* {cd}' for cd in cond_descriptions])
+            else:
+                description_str += ' ' + cond_descriptions[0]
+
+            total_str = f'{description_str}\n\n'
+
+            if sub_df.height:
+                total_str += gen_compendium_submes(sub_df, options.time)
+            else:
+                total_str = description_str
+
+        await send_long_mes(ctx, total_str)
+
+    @wheelcompendium.command(aliases=['ss'], with_app_command=False)
+    async def search_sched(self, ctx, *, options: SearchFlags):
+        """Lists every set of contestant names and themes in the compendium that matches a set of conditions.
+
+        If 'all' is given to logicExpr (short for logical expression), all the conditions must match. If 'any' is given, at least one condition must match. Custom logic expressions are also allowed, see the FAQ for more details.
+
+        Each condition is a set of "words", separated by a semicolon. See the FAQ for exact formatting details.
+
+        The "output" is the usual full table output of matching rows. No other output type is supported at this time.
+
+        Ignore the "time" parameter, as only syndicated is supported at this time."""
+
+        if not options.conditions:
+            raise ValueError('At least one condition required.')
+        elif options.time != 'syndicated':
+            raise ValueError('Invalid time for this search table.')
+
+        async with ctx.typing():
+            total_expr, expr_str, cond_descriptions = build_sched_search_expr(options)
+            sub_df = await asyncio.to_thread(self.wc.dfs['sched'].filter(total_expr).collect)
+            # _log.debug(f'\n{sub_df}')
+            plural = 's' if sub_df.height != 1 else ''
+
+            description_str = f'{sub_df.height} episode{plural} found in SYNDICATED for'
+
+            if len(cond_descriptions) > 1:
+                description_str += f'{expr_str}\n\n'
+                if expr_str.endswith('where'):
+                    description_str += '\n'.join([f'{l} = {cd}' for cd, l in zip(cond_descriptions, string.ascii_uppercase)])
+                else:
+                    description_str += '\n'.join([f'* {cd}' for cd in cond_descriptions])
+            else:
+                description_str += ' ' + cond_descriptions[0]
+
+            total_str = f'{description_str}\n\n'
+
+            if sub_df.height:
+                total_str += gen_compendium_submes(sub_df, 'sched')
             else:
                 total_str = description_str
 
@@ -658,7 +531,8 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
         There are 195 shows every syndicated season, with the exceptions of the pandemic season 37, when there were 167, and S16 and 21 had one clip show each, so effectively 194 true shows. The current season is assumed to be at max coverage at all times.
 
-        The compendium has several incomplete shows not in the database, that will go in if full copies of the show are ever found: https://buyavowel.boards.net/page/compendiumapp (Incomplete Shows)"""
+        The compendium has several incomplete shows not in the database, that will go in if full copies of the show are ever found: https://buyavowel.boards.net/page/compendiumapp (Incomplete Shows)
+        """
 
         await send_long_mes(ctx, ppp(self.wc.calc_coverage(tuple(seasons), do_range).fill_null('')))
 
@@ -673,15 +547,18 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
         Use the hide keyword argument to hide either the "date", "round", or "all", info until the command ends. This carries some risk as certain categories were misleading in the past (e.g. THING could be FOOD & DRINK), etc.
 
-        The bot will scan all messages for letters/puzzle guesses unless single=True is specified, then the bot will only respond to the command giver's messages."""
+        The bot will scan all users' messages for letters/puzzle guesses unless single=True is specified, then the bot will only respond to the command giver's messages.
+        """
 
-        sub_df, _, _ = await asyncio.to_thread(self.search_inner, options)
+        total_expr, _, _ = build_puzzle_search_expr(options)
+
+        sub_df = await asyncio.to_thread(self.wc.dfs[options.time].filter(total_expr).collect)
         if not sub_df.height:
             raise ValueError('No puzzles found to sample from (check the parameters passed in).')
 
         row = sub_df.sample(1)  # .filter(pl.col('DATE') == date(1992, 10, 5))
 
-        d, r, p, c = row.select(pl.col(['DATE', 'RD', 'PUZZLE', 'CATEGORY'])).row(0)
+        d, r, p, c, clue = row.select(pl.col('DATE', 'RD', 'PUZZLE', 'CATEGORY', 'CLUE/BONUS')).row(0)
 
         words = [' '.join(w) for w in p.split(' ')]
         if len(words) > 1 and c != 'CROSSWORD':
@@ -709,7 +586,6 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
         d_s = d.strftime('%b %d %Y')
         if c == 'CROSSWORD':
-            clue = row.row(0)[-1]
             c += f' ({clue})'
 
         retro = d < date(1988, 10, 3) and r == 'BR'
@@ -826,28 +702,25 @@ class CompendiumCog(commands.Cog, name='Compendium'):
         """Prints a static message with some extra explanation on a few oddities in the compendium database.
 
         For more, see https://buyavowel.boards.net/page/compendiumapp"""
-        await ctx.send('>>> ' + COMPENDIUM_NOTES)
+        await ctx.send(COMPENDIUM_NOTES)
 
     async def cog_command_error(self, ctx, e):
         if isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
             if ctx.command.name == 'search':
-                await ctx.send('At least one condition required.', ephemeral=True)
+                await ctx.send('At least one condition required.')
             elif ctx.command.name == 'play':
-                await ctx.send('At least one condition required. (Suggestion for play: `cond=rd;br`)', ephemeral=True)
+                await ctx.send('At least one condition required. (Suggestion for play: `cond=rd;br`)')
             else:  # freq
-                await ctx.send('`Must specify column.`', ephemeral=True)
+                await ctx.send('`Must specify column.`')
         elif isinstance(e, commands.CommandInvokeError):
             if isinstance(e.__cause__, pl.exceptions.ComputeError):
-                await ctx.send(f'Error computing query:\n```\n{e.__cause__}\n```', ephemeral=True)
+                await ctx.send(f'Error computing query:\n```\n{e.__cause__}\n```')
             else:  # if isinstance(e.__cause__, ValueError):
-                await ctx.send(f'`{e.__cause__}`', ephemeral=True)
+                await ctx.send(f'`{e.__cause__}`')
         elif isinstance(e, commands.CheckFailure):
-            if not self.wc or any(v is None for v in self.wc.df.values()):
-                await ctx.send('`Compendium is loading (try again shortly) or failed to load.`', ephemeral=True)
-            else:
-                await ctx.send('`Only compendium maintainers can run this command.`', ephemeral=True)
+            await ctx.send('`Only compendium maintainers can run this command.`')
         elif isinstance(e, commands.MaxConcurrencyReached):
-            await ctx.send('`Only one puzzle can be played per channel at a time.`', ephemeral=True)
+            await ctx.send('`Only one puzzle can be played per channel at a time.`')
         elif isinstance(e, commands.BadFlagArgument):
             if isinstance(e.original, commands.BadLiteralArgument):
                 await ctx.send(f'`Parameter "{e.flag.name}" must be one of {e.original.literals} (case-sensitive).`')
@@ -856,7 +729,10 @@ class CompendiumCog(commands.Cog, name='Compendium'):
             else:
                 await ctx.send(f'`Parameter "{e.flag.name}" was improperly formatted: {e.argument}`')
         else:
-            await ctx.send(f'`{e}`', ephemeral=True)  # wayo.py handler
+            await ctx.send(f'`{e}`')  # wayo.py handler
+
+        if self._debug:
+            traceback.print_exception(e)
 
 
 async def setup(bot):

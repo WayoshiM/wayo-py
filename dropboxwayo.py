@@ -5,12 +5,14 @@ from datetime import datetime
 import dropbox
 from dropbox.files import WriteMode
 
+from secretswayo import DROPBOX_TOKEN
+
 _log = logging.getLogger('wayo_log')
 
 
 class DropboxWayo:
     def __init__(self):
-        self.dbx = dropbox.Dropbox(oauth2_access_token='REDACTED')
+        self.dbx = dropbox.Dropbox(oauth2_access_token=DROPBOX_TOKEN)
 
     def upload(self, f, path, write_mode='overwrite', notify=True):
         try:

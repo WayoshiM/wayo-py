@@ -1,5 +1,6 @@
 import colorsys
 import io
+import itertools
 import operator
 import random
 import re
@@ -33,6 +34,7 @@ POSITIVE_CENT = commands.Range[float, 0.01]
 ARP_RANGE = commands.Range[int, 20251]
 
 from pg import CURRENT_SEASON, PG, PG_WILDCARD
+from util2 import SI
 
 SEASON_RANGE = commands.Range[int, 1, CURRENT_SEASON]
 
@@ -124,12 +126,12 @@ def season_portion_str(p: Portion):
 # assumes sorted
 def season_portion_str_2(s: List[int]):
     if len(s) == 1:
-        p = P.singleton(s[0])
+        p = SI.singleton(s[0])
     else:
-        p = P.closed(s[0], s[-1])
+        p = SI.closed(s[0], s[-1])
         for ss in range(s[0] + 1, s[-1]):
             if ss not in s:
-                p -= P.open(ss - 1, ss + 1)
+                p -= SI.open(ss - 1, ss + 1)
     return season_portion_str(p)
 
 
@@ -181,9 +183,9 @@ def parse_endpoints(start, end, *pgs, dateF=None, syndicated=False, or_=False):
     elif end > CURRENT_SEASON:
         return "`I'm not from the future.`"
 
-    season_startpoint = P.closed(start, end)
+    season_startpoint = SI.closed(start, end)
     if syndicated:
-        season_startpoint &= P.closed(1, 8) | P.singleton(23)
+        season_startpoint &= SI.closed(1, 8) | SI.singleton(23)
 
     if or_:
         seasons = season_startpoint & reduce(operator.or_, [pg.activeSeasons for pg in pgs])
@@ -203,7 +205,7 @@ async def parse_time_options(ctx, options, *pgs):
         epText = options.time.upper()
     else:
         if pgs:
-            assert (all(pg) for pg in pgs)
+            assert (all(pg) for pg in pgs), 'Null PG somehow entered parse_time_options.'
             se = parse_endpoints(
                 options.start, options.end, *pgs, dateF=options.dateFormat, syndicated=options.time == 'syndicated'
             )
@@ -212,11 +214,11 @@ async def parse_time_options(ctx, options, *pgs):
                 options.start, options.end, dateF=options.dateFormat, syndicated=options.time == 'syndicated'
             )
         if type(se) is str:
-            await ctx.send(se, ephemeral=True)
+            await ctx.send(se)
             raise ValueError
         ep, epText = se
         if isDate and options.time not in ('daytime', 'primetime'):
-            await ctx.send('`Dates only supported for daytime and primetime.`', ephemeral=True)
+            await ctx.send('`Dates only supported for daytime and primetime.`')
             raise ValueError
         if options.time == 'syndicated':
             epText = 'SYNDICATED ' + epText
@@ -232,15 +234,12 @@ def _command_to_fn(command):
     return '-'.join([min(c.aliases, key=len) if c.aliases else c.name for c in commands])
 
 
-_MAX_FILESIZE = 8 * 2**20
-
-
 async def send_long_mes(ctx, s, *, fn=None, newline_limit=19):
     if len(s) < MAX_MES_SIZE - 7 and s.count('\n') <= newline_limit:
         await ctx.send(f'```\n{s}```')
-    elif getsizeof(s) > _MAX_FILESIZE:
+    elif getsizeof(s) > ctx.filesize_limit:
         await ctx.send(
-            '```The result is too big for a Discord file size (non-Nitro). You probably did not mean to get a result this large.\n\nIf you really want this result, contact Wayoshi directly and he can help get it for you. The first 500 characters of the result are included below as a convenience.\n\n'
+            '```The result is too big for a Discord file size on this guild/DM. You probably did not mean to get a result this large.\n\nIf you really want this result, contact Wayoshi directly and he can help get it for you. The first 500 characters of the result are included below as a convenience.\n\n'
             + s[:500]
             + '```'
         )
@@ -253,7 +252,11 @@ async def send_long_mes(ctx, s, *, fn=None, newline_limit=19):
         fn = fn or (_command_to_fn(ctx.command) + '_' + datetime.now().isoformat(timespec='seconds'))
 
         # 4/28/22 - pastebin!
-        link = await ctx.bot.do_pastebin(s, fn)
+        if getsizeof(s) < 10 * 2**20:
+            link = await ctx.bot.do_pastebin(s, fn)
+        else:
+            link = None
+
         res = f'Pastebin mirror: <{link}>' if link else None
         await ctx.send(res, file=discord.File(io.StringIO(s), filename=fn + '.txt'))
 
@@ -296,7 +299,7 @@ class CancelButton(dui.Button):
             await interaction.response.edit_message(view=None)
             self.view.stop()
         else:
-            await interaction.response.send_message('You are not permitted to cancel.', ephemeral=True)
+            await interaction.response.send_message('You are not permitted to cancel.')
 
 
 from discord import app_commands
@@ -360,7 +363,7 @@ class LogicExpression:
             ) in (
                 S.true,
                 S.false,
-            )
+            ), 'Logical expression somehow does not evaluate to True or False.'
             # subs returns a boolalg.BooleanTrue - must actually compare to native True or, preferably, sympy True
             # let zip truncate automatically
             self.func = lambda bools: S.true == self.sym.subs({l: b for l, b in zip(string.ascii_lowercase, bools)})

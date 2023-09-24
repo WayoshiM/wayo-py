@@ -18,14 +18,16 @@ import numpy as np
 import openpyxl
 import portion as P
 import polars as pl
+import polars.selectors as cs
 import texttable
+import xlsxwriter
 from cachetools import LFUCache, cachedmethod
 from cachetools.keys import hashkey
 from cachetools.func import lfu_cache
 
 Portion = NewType('Portion', P.Interval)
 
-from pg import CURRENT_SEASON, MAX_PG_NAME_LEN, PG, PGPlaying
+from pg import CURRENT_SEASON, MAX_PG_NAME_LEN, PG, PGPlaying, FLAG_STRS
 
 MISSING_PG = '??????????'
 ANY_SLOT = frozenset({1, 2, 3, 4, 5, 6})
@@ -53,18 +55,26 @@ ALL_FLAGS_BUT_UNCERTAIN = ALL_FLAGS_BUT_GUESS - U_FLAG
 
 FLAG_INFO = OrderedDict(
     {
-        'C': 'non-car for a non-restored car (NCFAC), or a car game for a boat. Shows up as `car` or `boat` in output.',
+        'C': 'A playing of a non-car game for a non-restored car (NCFAC), or a car game for a boat. Shows up as `car` or `boat` in wayo.py output.',
         'T': '3+ multiprizer for trips, or in the one instance of the all-Plinko show, Plinko for a trip.',
-        '&': "any playing for 2 or more cars that isn't It's Optional or Triple Play. Shows up as `cars` in output.",
+        '&': "Any playing for 2 or more cars that isn't It's Optional or Triple Play. Shows up as `cars` in wayo.py output.",
         '*': 'A playing with rule changes just for that playing (such as a Big Money Week version of a casher, or 35th Anniversary Plinko), a LMAD Mashup game, or in two syndicated cases, a "vintage car reproduction". Note for MDS shows, an increase on the top prize on cashers was so common that these instances are not denoted with this flag.',
         '@': 'A playing for a restored car, or a 4-prizer played for LA sports season tickets.',
         'R': 'A playing for really unusual prize(s).',
-        '$': "Mainly a non-cash game played for cash, hence the use of the dollar sign here. In syndicated, Double Prices was played twice in one segment, for two prizes. In a couple instances instead, a car game for a trailer, or in the one instance of the all-Plinko show, Plinko for two regular prizes.",
+        '$': "Mainly a non-cash game played for cash, hence the use of the dollar sign in wayo.py output. In syndicated, Double Prices was played twice in one segment, for two prizes. In a couple instances instead, a car game for a trailer, or in the one instance of the all-Plinko show, Plinko for two regular prizes.",
         '^': 'The slotting of the game is uncertain. Some old records are incomplete and slotted by best guess.',
         '?': 'The identity of the game is uncertain. Some old records are incomplete and this is a best guess on what the game was. Most often it is known which set of two or three games occurred within a small subset of shows, with no further certainty.',
-        'M': 'This was the Million Dollar Game in a Drew MDS (primetime) in 2008. Shows up as `MDG` in output.',
+        'M': 'The Million Dollar Game in a Drew MDS (primetime) in 2008. Shows up as `MDG` in wayo.py output.',
     }
 )
+
+COMPENDIUM_NOTES = """- 0013D never aired, the show was replaced with 0013R (also known as 0013D(R)).
+- 2944D has no airdate.
+- 5811D never aired, it was replaced by 58XXD with an identical lineup.
+- Original 1513K was renamed 1513X and replaced with a new 1513K with an identical lineup.
+- 4512K and 0294L were broadcast in primetime, but both were originally meant for daytime.
+- Several shows in early Seasons 38 and 39 were broadcast in the afternoon as soap opera "replacements."
+- A couple midseason episode replacements in S48 had end-of-season production numbers, 9221-22K. But due to the COVID19 pandemic, the season ended abruptly at 9172K. In season 49, 9223-25K were skipped."""
 
 
 @enum.unique
@@ -84,21 +94,13 @@ class ConflictSheet:
     _MAX_CACHE = 64
     _CACHE_GETTER = attrgetter('cache')
 
-    def __init__(
-        self, load_func: Callable[[], io.BytesIO], save_func: Callable[[io.BytesIO], None], override_pickle: bool = False
-    ):
+    def __init__(self, load_func: Callable[[], io.BytesIO], save_func: Callable[[io.BytesIO], None]):
         self.load_func = load_func
         self.save_func = save_func
         self.cache = LFUCache(self._MAX_CACHE)
-        try:
-            if override_pickle:
-                raise ValueError
-            self.load_pickle()
-            self.excel_fp = None
-        except:
-            self.load_excel()
-            self._df_dict = {}
-            self.initialize()
+        self._df_dict = OrderedDict()
+        self.initialize()
+        self.notes = COMPENDIUM_NOTES
 
     def get(self, time: str):
         return self._df_dict[time]
@@ -120,12 +122,12 @@ class ConflictSheet:
         ttable.set_cols_dtype('tiiiiiiiif')
         ttable.set_precision(1)
 
-        sub_slots_df = self.endpoint_sub(endpoints, time, q=self.slot_table(time, 'S'))
+        sub_slots_df = self.endpoint_sub(endpoints, time, table='slots')
         # permutation must be done to match both possible orders of pg1/pg2, so do the more costly operation once
         pg_pair_perms = set(itertools.permutations([str(pg) for pg in pgs], 2))
 
         pg_pair_dict = Counter()
-        for r in self.endpoint_sub(endpoints, time).select(pl.col('^PG[1-6]_p$')).collect().rows():
+        for r in self.endpoint_sub(endpoints, time).select(cs.matches('^PG\d_p$')).collect().rows():
             for pg1, pg2 in set(itertools.combinations(r, 2)) & pg_pair_perms:
                 pg_pair_dict[pg1, pg2] += 1
                 pg_pair_dict[pg2, pg1] += 1
@@ -142,10 +144,8 @@ class ConflictSheet:
 
             ssd_pg = (
                 sub_slots_df.filter((pl.col('PG') == str(pg)) & (pl.col('flag') < SlotCertainty.SLOT))
-                .select('^PG\d$')
+                .select(cs.matches('PG\d$').sum().fill_null(0))
                 .collect()
-                .sum()
-                .fill_null(0)
             )
 
             nums[i - 1, 6] = slf = ssd_pg[0, i - 1]
@@ -306,13 +306,18 @@ class ConflictSheet:
         return nPGs, non_car
 
     @cachedmethod(_CACHE_GETTER, key=partial(hashkey, 'ep_sub'))
-    def endpoint_sub(self, endpoints: Portion, time: str, *, q: Optional[pl.LazyFrame] = None):
-        if q is None:
+    def endpoint_sub(self, endpoints: Portion, time: str, *, table: str = 'df'):
+        if table == 'df':
             q = self._df_dict[time].lazy()
+        else:  # slot
+            q = self.slot_table(time, 'S' if time != 'primetime' else None)
+
         if not endpoints:
             return q
         elif type(endpoints.lower) is not int:
-            return q.filter(pl.col('AIRDATE').is_in(pl.date_range(endpoints.lower, endpoints.upper, '1d')))
+            if table != 'df':
+                raise ValueError('Slots table does not support date start/end at this time.')
+            return q.filter(pl.col('AIRDATE').is_between(endpoints.lower, endpoints.upper))
         elif time != 'primetime':
             return q.filter(pl.col('S').is_in(list(P.iterate(endpoints, step=1))))
         else:
@@ -327,15 +332,12 @@ class ConflictSheet:
         pgs = [str(pg) for pg in pgQueries]
         pg_end_label = 3 if time == 'syndicated' else 6
 
-        if not all(pgFlags):
-            q = q.with_columns(pl.concat_list(pl.col(f'^PG[1-{pg_end_label}]_p$')).alias('PG_a'))
-
         for pg, pgf in zip(pgs, pgFlags):
             if pgf:
                 exprs = [(pl.col(f'PG{i}_p') == pg) & (has_any_flags(f'PG{i}_f', pgf)) for i in range(1, pg_end_label + 1)]
-                q = q.filter(pl.any(exprs))
+                q = q.filter(pl.any_horizontal(exprs))
             else:
-                q = q.filter(pl.col('PG_a').arr.contains(pg))
+                q = q.filter(pl.any_horizontal(cs.matches(f'^PG[1-{pg_end_label}]_p$') == pg))
 
         return q
 
@@ -348,270 +350,254 @@ class ConflictSheet:
             for vc in vc_subset:
                 vc.insert(0, by)
 
-        gs = [
-            q.groupby(vc).agg(pl.count()).rename({f'PG{i}_p': 'PG', f'PG{i}_f': 'flag', 'count': f'PG{i}'})
-            for i, vc in enumerate(vc_subset, 1)
-        ]
         return reduce(
-            lambda g1, g2: g1.join(g2, on=[by, 'PG', 'flag'] if by else ['PG', 'flag'], how='outer'), gs
-        ).with_columns(
-            [
-                pl.col('PG').cast(pl.Categorical).cat.set_ordering('lexical'),
-                pl.col('^PG\d$').fill_null(strategy='zero'),
-            ]
-        )
-
-    def load_excel(self, fn='Price_is_Right_Frequency.xlsx'):
-        self.excel_fp = self.load_func(fn)
+            lambda g1, g2: g1.join(g2, on=[by, 'PG', 'flag'] if by else ['PG', 'flag'], how='outer'),
+            (
+                q.group_by(vc).count().rename({f'PG{i}_p': 'PG', f'PG{i}_f': 'flag', 'count': f'PG{i}'})
+                for i, vc in enumerate(vc_subset, 1)
+            ),
+        ).with_columns(pl.col('PG').cast(pl.Categorical).cat.set_ordering('lexical'), cs.matches('^PG\d$').fill_null(0))
 
     def save_excel(self, fn='Price_is_Right_Frequency.xlsx'):
-        self.save_func(self.excel_fp, fn)
-        self._reset_excel()
+        self.save_func(self.write_excel(), fn)
 
-    def _reset_excel(self):
-        self.excel_fp.seek(0)
+    def write_excel(self):
+        # coud factor these static methods & variables out, but ultimately a minor concern
+        general_format = {'font_name': 'Franklin Gothic Medium', 'font_size': 12, 'align': 'center', 'border': 1}
+        date_format = dict(num_format='m/d/yyyy', **general_format)
+        bg_colors = [
+            '#FF0000',
+            '#3399FF',
+            '#00FA00',
+            '#FFFF00',
+            '#FF6600',
+            '#FF99FF',
+            '#CC99FF',
+            '#BFBFBF',
+            '#8F8F8F',
+            '#CD7F32',
+        ]
 
-    def load_pickle(self, fn='df_dict.pickle'):
-        with self.load_func(fn) as f:
-            self._df_dict = pickle.load(f)
-        with self.load_func('cs_notes.pickle') as f:
-            self.notes = pickle.load(f)
-
-    def update(self, prodNumber, pgps, append, airdate, intended_date, notes):
-        if not self.excel_fp:
-            self.load_excel()
-
-        f_book = openpyxl.load_workbook(self.excel_fp)
-
-        isPrimetime = prodNumber.endswith('SP')
-
-        f_sheet = f_book['Calendar']
-        EXCEL_COLORS = [f_sheet[f'N{i}'].fill for i in range(2, 10)]
-        EMPTY_FILL = f_sheet['A1'].fill
-        if isPrimetime:
-            f_sheet = f_book['Primetime']
-
-        if not append:
-            row_idx, _, retro_ts = (
-                self._df_dict['primetime' if isPrimetime else 'daytime']
-                .select(pl.col('^(PROD|INT. DATE)$'))
-                .with_row_count()
-                .row(by_predicate=pl.col('PROD') == prodNumber)
+        def gen_cf_list(col, time):
+            bit_cond = (
+                (lambda b: b < 9)
+                if time in ('daytime', 'unaired')
+                else lambda b: bit < 7
+                if time == 'syndicated'
+                else (lambda b: not (7 <= bit <= 8))
             )
+            l = [
+                {'type': 'formula', 'criteria': f'={col}2={2**bit}', 'format': {'bg_color': bgc}}
+                for bit, bgc in enumerate(bg_colors)
+                if bit_cond(bit)
+            ]
+            if time == 'daytime':
+                l.append(
+                    {
+                        'type': 'formula',
+                        'criteria': f'={col}2=9',
+                        'format': {'bg_color': bg_colors[0], 'font_color': bg_colors[3]},
+                    }
+                )
+            elif time == 'primetime':
+                l.append(
+                    {
+                        'type': 'formula',
+                        'criteria': f'={col}2=513',
+                        'format': {'bg_color': bg_colors[0], 'font_color': bg_colors[-1]},
+                    }
+                )
+            return l
 
-            idx = 2 + row_idx
-            if not isPrimetime:
-                idx += self._df_dict['unaired'].filter(pl.col('INT. DATE') < retro_ts).height
-        else:
-            if isPrimetime:
-                idx = 2 + self._df_dict['primetime'].height
-            else:
-                sorted_index = [
-                    SORT_PROD(i)
-                    for i in self._df_dict['daytime'].select(pl.col('PROD')).to_series().to_list()
-                    if i not in UNAIRED_DUPLICATES
-                ]
-                idx = (
-                    2
-                    + len(UNAIRED_DUPLICATES)
-                    + self._df_dict['unaired'].height
-                    + bisect.bisect(sorted_index, prodNumber[4] + prodNumber[:4], lo=len(sorted_index) - 250)
+        # start of actual work
+
+        excel_fp = io.BytesIO()
+
+        with xlsxwriter.Workbook(excel_fp) as wb:
+            for era in self_df_dict.keys():
+                df_out = (
+                    self._df_dict[era]
+                    .lazy()
+                    .drop('PG_n')
+                    .with_columns(
+                        pl.when(pl.col(f'PG{slot}_f') > 0)
+                        .then(pl.col(f'PG{slot}').str.replace(r' \(.+?\)$', ''))
+                        .otherwise(pl.col(f'PG{slot}'))
+                        for slot in range(1, 4 if era == 'syndicated' else 7)
+                    )
                 )
 
-            f_sheet.insert_rows(idx)
+                if era != 'syndicated':
+                    df_out = df_out.with_columns(cs.matches('^PG[4-6]$').fill_null('-'))
+                if era == 'unaired':
+                    df_out = df_out.drop('AIRDATE')
 
-            for c in 'ABCDEFGHIJKL':
-                if isPrimetime and c == 'K':
-                    continue
-                # going into private attributes is not so kosher, but it works! and the library should expose this publicly!
-                f_sheet[f'{c}{idx}']._style = copy(f_sheet[f'{c}{idx-1}']._style)
-                f_sheet[f'{c}{idx}'].fill = copy(EMPTY_FILL)
-                if f_sheet[f'{c}{idx}'].font.color:
-                    f_sheet[f'{c}{idx}'].font.color.rgb = 'FF000000'
+                flag_cols = cs.expand_selector(df_out, cs.matches('^PG\d_f$'))
 
-            f_sheet[f'A{idx}'] = prodNumber
-            if not isPrimetime:
-                f_sheet[f'B{idx}'] = CURRENT_SEASON
-                # f_sheet[f'C{idx}'] = 1 + f_sheet[f'C{idx-1}'].value
-            else:
-                f_sheet[f'D{idx}'] = 'TPIR@N – '
-            for c in 'BC' if isPrimetime else 'DE':
-                f_sheet[f'{c}{idx}'] = airdate
+                df_out.collect().write_excel(
+                    wb,
+                    era.title(),
+                    column_formats={
+                        ~cs.temporal(): general_format,
+                        cs.temporal(): date_format,
+                    },
+                    header_format=general_format,
+                    conditional_formats={
+                        f'PG{slot}': gen_cf_list(col, era)
+                        for slot, col in zip(
+                            range(1, 4 if era == 'syndicated' else 7),
+                            string.ascii_uppercase[
+                                df_out.columns.index(flag_cols[0]) : df_out.columns.index(flag_cols[-1]) + 1
+                            ],
+                        )
+                    },
+                    hidden_columns=cs.expand_selector(df_out, cs.contains('_')),
+                    row_heights=22,
+                    column_widths={
+                        'PROD': 70,
+                        'S': 28,
+                        cs.temporal(): 97,
+                        'SPECIAL' if era == 'primetime' else 'NOTES': 274,
+                        cs.starts_with('PG'): 149,
+                    },
+                    freeze_panes='A2',
+                    autofilter=False,
+                    hide_gridlines=True,
+                )
+
+            key_df = pl.from_dict({'KEY': FLAG_INFO.values(), 'FLAG': [2**b for b in range(len(FLAG_INFO))]})
+            key_format = dict(text_wrap=True, **general_format) | {'align': 'left'}
+            key_df.write_excel(
+                wb,
+                'Key',
+                header_format=general_format,
+                column_formats={'KEY': key_format},
+                autofilter=False,
+                hide_gridlines=True,
+                hidden_columns='FLAG',
+                column_widths={'KEY': 690},
+                conditional_formats={
+                    'KEY': [
+                        {'type': 'formula', 'criteria': f'=B2={2**bit}', 'format': {'bg_color': bgc}}
+                        for bit, bgc in enumerate(bg_colors)
+                    ]
+                },
+            )
+
+        return excel_fp
+
+    def update(self, prodNumber, pgps, append, airdate, intended_date, notes):
+        era = 'primetime' if prodNumber.endswith('SP') else 'daytime'
+        row = (
+            {
+                'PROD': prodNumber,
+                'AIRDATE': airdate,
+                'INT. DATE': intended_date,
+                'NOTES' if era == 'daytime' else 'SPECIAL': notes,
+            }
+            if append
+            else self._df_dict[era].row(by_predicate=pl.col('PROD') == prodNumber, named=True)
+        )
+        if era == 'daytime' and append:
+            row['S'] = CURRENT_SEASON
 
         if pgps:
-            for c, pgp in zip('EFGHIJ' if isPrimetime else 'GHIJKL', pgps):
-                f_sheet[f'{c}{idx}'] = str(pgp.pg) if append else pgp.pg_str
-                if not append or pgp.flag:
-                    if pgp.flag == 2 ** _pf_bit('?'):
-                        f_sheet[f'{c}{idx}'] = '*' + f_sheet[f'{c}{idx}'].value + '*'
-                    else:
-                        f_sheet[f'{c}{idx}'].fill = copy(EXCEL_COLORS[int(np.log2(pgp.flag))] if pgp.flag else EMPTY_FILL)
-        else:
-            assert not append
+            for slot, pgps in enumerate(pgps, 1):
+                row[f'PG{slot}'] = str(pgp)
+                row[f'PG{slot}_p'] = str(pgp.pg)
+                row[f'PG{slot}_f'] = pgp.flag
+
+        if not append:
             if airdate:
-                c = 'B' if isPrimetime else 'D'
-                f_sheet[f'{c}{idx}'] = airdate
+                row['AIRDATE'] = airdate
             if intended_date:
-                c = 'C' if isPrimetime else 'E'
-                f_sheet[f'{c}{idx}'] = intended_date
-            # allow for unsetting notes if empty string
-            if notes is not None:
-                c = 'D' if isPrimetime else 'F'
-                f_sheet[f'{c}{idx}'] = notes
+                row['INT. DATE'] = intended_date
+            # allow None -> null
+            row['NOTES' if era == 'daytime' else 'SPECIAL'] = notes
 
-        self.excel_fp = io.BytesIO()
-        f_book.save(self.excel_fp)
-        self._reset_excel()
+        df_row = pl.from_dict(row, schema=self._df_dict[era].schema)
 
-    def _fill_in_flags(self, era, fs, col, col_adjust, ec):
-        flags = [list(itertools.repeat(0, self._df_dict[era].height)) for _ in range(1, col_adjust + 2)]
-        for i, ep in enumerate(
-            fs.iter_rows(min_row=2, max_row=self._df_dict[era].height + 1, min_col=col, max_col=col + col_adjust)
-        ):
-            for s, cell in enumerate(ep, -(col_adjust + 1)):
-                if cell.value == '-':
-                    flags[s][i] = None
-                else:
-                    if cell.fill.start_color.rgb in ec:  # and not dff.iloc[i][f'PG{s}'].flag:
-                        if cell.value[0] == '*':
-                            flags[s][i] |= 2 ** _pf_bit('?')
-                        else:
-                            flags[s][i] |= 2 ** (ec[cell.fill.start_color.rgb])
-                    if cell.font.color and cell.font.color.rgb != 'FF000000':
-                        try:
-                            flags[s][i] |= 2 ** (ec[cell.font.color.rgb])
-                        except KeyError:
-                            flags[s][i] |= 2 ** _pf_bit('MDG')
-
-        self._df_dict[era].hstack(
-            pl.from_dict(
-                {f'PG{d}_f': f for d, f in enumerate(flags, 1)},
-                schema={f'PG{d}_f': pl.UInt16 for d in range(1, col_adjust + 2)},
-            ),
-            in_place=True,
-        )
+        if era == 'primetime':
+            self._df_dict[era].extend(df_row.select(self._df_dict[era].columns))
+        else:
+            self._df_dict[era] = (
+                self._df_dict[era]
+                .drop('PG_n')
+                .filter(pl.col('PROD') != prodNumber)
+                .merge_sorted(
+                    # we know the PROD format will be more specific here.
+                    df_row.with_columns(pl.col('PROD').str.replace_all('^(\d{4})([KL])$', '$2$1').alias('_PROD')).drop(
+                        'PG_n'
+                    ),
+                    '_PROD',
+                )
+                .with_row_count('PG_n', 1)
+            )
 
     def _reset_caches(self):
         self.endpoint_sub.cache_clear(self)
         self.concurrence_query.cache_clear(self)
         self.slot_table.cache_clear(self)
 
-    def initialize(self):
+    def initialize(self, fn='Price_is_Right_Frequency.xlsx'):
         self._df_dict.clear()
         self._reset_caches()
 
-        # create initial sheets.
-        for era, sheet, col_include in zip(
-            ('daytime', 'primetime', 'syndicated'),
-            ('Calendar', 'Primetime', 'Syndication'),
-            (lambda i: i != 2, lambda i: i < 10, lambda i: i < 5),
-        ):
-            q = (
-                pl.read_excel(
-                    self.excel_fp,
-                    sheet_name=sheet,
-                    xlsx2csv_options={'ignore_formats': 'float'},
-                    read_csv_options={
-                        'columns': [i for i in range(12) if col_include(i)],
-                        'infer_schema_length': 0,
-                        'null_values': '-',
-                    },
-                )
-                .head(-1)  # remove placeholder line of -'s
-                .lazy()
-            )
+        excel_fp = self.load_func(fn)
 
-            wc = []
+        for era in ('daytime', 'primetime', 'syndicated', 'unaired'):
+            q = pl.read_excel(
+                excel_fp,
+                sheet_name=era.title(),
+                xlsx2csv_options={'ignore_formats': 'float'},
+                read_csv_options={
+                    'row_count_name': 'PG_n',
+                    'row_count_offset': 1,
+                    'infer_schema_length': 0,
+                    'null_values': '-',
+                },
+            ).lazy()
+
+            wc = [cs.ends_with('_f').cast(pl.UInt16)]
             if era != 'primetime':
                 wc.append(pl.col('S').cast(pl.UInt8))
             if era != 'syndicated':
                 # for some reason some dates are reformatting when going through read_excel, I just take care of it here.
                 wc.extend(
                     [
-                        pl.when(pl.col(d).str.contains('/'))
-                        .then(pl.col(d).str.strptime(pl.Date, '%m/%d/%Y', strict=False))
-                        .otherwise(pl.col(d).str.strptime(pl.Date, '%m-%d-%y', strict=False))
-                        for d in ('AIRDATE', 'INT. DATE')
+                        pl.when(cs.ends_with('DATE').str.contains('/'))
+                        .then(cs.ends_with('DATE').str.strptime(pl.Date, '%m/%d/%Y', strict=False))
+                        .otherwise(cs.ends_with('DATE').str.strptime(pl.Date, '%m-%d-%y', strict=False))
                     ]
                 )
 
-            # collect here to get height of dataframe for flags step.
-            self._df_dict[era] = q.with_columns(wc).collect()
+            q = q.with_columns(wc).collect()
 
-        # lookup actual PG. (remove * on uncertain but not permanently yet)
-        for era, df in self._df_dict.items():
-            self._df_dict[era] = self._df_dict[era].with_columns(
-                [
-                    pl.col(f'PG{d}').str.strip('*').apply(lambda pg: str(PG.lookup_table.get(pg))).alias(f'PG{d}_p')
+            q = (
+                q.lazy()
+                .with_columns(
+                    pl.when(pl.col(f'PG{d}_f') > 0)
+                    .then(pl.format('{} ({})', pl.col(f'PG{d}'), pl.col(f'PG{d}_f').map_dict(FLAG_STRS)))
+                    .otherwise(pl.col(f'PG{d}'))
                     for d in range(1, 4 if era == 'syndicated' else 7)
-                ]
-            )
-
-        # fill in flags. (here we use * to mark uncertain)
-        with ThreadPoolExecutor() as executor:
-            # read background colors
-            f_book = openpyxl.load_workbook(self.excel_fp, read_only=True)
-            f_sheet = f_book['Calendar']
-            EXCEL_COLORS = {f_sheet[f'N{i}'].fill.start_color.rgb: i - 2 for i in range(2, 10)}
-
-            # read notes
-            self.notes = '\n'.join('-' + f_sheet[f'AA{i}'].value for i in range(2, 9))
-
-            # setup and run in parallel
-            df_args = [
-                ('daytime', f_sheet, 7, 5, EXCEL_COLORS),
-                ('primetime', f_book['Primetime'], 5, 5, EXCEL_COLORS),
-                ('syndicated', f_book['Syndication'], 3, 2, EXCEL_COLORS),
-            ]
-            futures = [executor.submit(self._fill_in_flags, *dfa) for dfa in df_args]
-            (f.result() for f in futures)
-
-        self._reset_excel()
-
-        # construct PGPlayings and overwrite appropriate columns at this time
-        for era, df in self._df_dict.items():
-            # I could not get this to work with struct. The is_not_null() did not work (even on a specific struct field).
-            self._df_dict[era] = (
-                self._df_dict[era]
-                .with_columns(
-                    [
-                        pl.when(pl.col(f'PG{d}_f') > 0)
-                        .then(pl.concat_list([pl.col(f'PG{d}').str.strip('*'), pl.col(f'PG{d}_f')]))
-                        .otherwise(None)
-                        .alias(f'pgplaying{d}')
-                        for d in range(1, 4 if era == 'syndicated' else 7)
-                    ]
                 )
                 .with_columns(
-                    [
-                        pl.when(pl.col(f'pgplaying{d}').is_not_null())
-                        .then(pl.col(f'pgplaying{d}').apply(lambda l: str(PGPlaying(l[0], int(l[1])))))
-                        .otherwise(pl.col(f'PG{d}'))
-                        .alias(f'PG{d}')
-                        for d in range(1, 4 if era == 'syndicated' else 7)
-                    ]
+                    pl.when((pl.col(f'PG{d}').str.ends_with('(car)')) & (pl.col(f'PG{d}_p').is_in(PG.CAR_BOATABLE_STRS)))
+                    .then(pl.col(f'PG{d}').str.replace('(car)', '(boat)', literal=True))
+                    .otherwise(pl.col(f'PG{d}'))
+                    for d in range(1, 4 if era == 'syndicated' else 7)
                 )
-                .select(pl.exclude('^pgplaying\d$'))
             )
 
-        # build string cache / cat
-        for era, df in self._df_dict.items():
-            self._df_dict[era] = self._df_dict[era].with_columns(pl.col(pl.Utf8).cast(pl.Categorical))
+            if era == 'daytime':
+                q = q.with_columns(
+                    pl.col('PROD')
+                    .str.replace_all('^(\w{4})(\w)$', '$2$1')
+                    .str.replace('R', 'D')
+                    .str.replace('XX', '11')
+                    .alias('_PROD')
+                )
 
-        # split up unaired
-        self._df_dict['unaired'] = self._df_dict['daytime'].filter(pl.col('AIRDATE').is_null())
-        self._df_dict['daytime'] = self._df_dict['daytime'].filter(pl.col('AIRDATE').is_not_null())
-
-        # maintain meta column of show number
-        for era, df in self._df_dict.items():
-            self._df_dict[era] = self._df_dict[era].with_row_count('PG_n', 1)
-
-        # save files to quick load on bot restarts later
-        with io.BytesIO() as dfd_ip:
-            pickle.dump(self._df_dict, dfd_ip)
-            dfd_ip.seek(0)
-            self.save_func(dfd_ip, 'df_dict.pickle')
-        with io.BytesIO() as dfd_ip:
-            pickle.dump(self.notes, dfd_ip)
-            dfd_ip.seek(0)
-            self.save_func(dfd_ip, 'cs_notes.pickle')
+            self._df_dict[era] = q.with_columns((cs.string() - cs.contains('PROD')).cast(pl.Categorical)).collect(
+                streaming=True
+            )

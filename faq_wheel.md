@@ -1,16 +1,16 @@
 # INTRO
 
-The conditions allowed in `wheelcompendium search` are not final in that more may be added, or the syntax may be changed depending upon community needs. Nothing will be subtracted. This document will stay up to date with changes.
+The conditions allowed in the `wheelcompendium search` set of commands are not final in that more may be added, or the syntax may be changed depending upon community needs. Nothing will be subtracted. This document will stay up to date with changes.
 
 The command signature:
 
 `!wheelcompendium [search|s] ([logicexpr|logic]=all) ([condition|cond|c]=...) ([time|version]=syndicated) ([dateformat|format]=%m/%d/%y)`
 
-The custom logic is identical to `lineup search` on the Price is Right side of the bot, refer to that pastebin for more.
+There is also `[search_choices|sc]` and `[search_sched|ss]`.
+
+The custom logic is identical to `lineup search` on the Price is Right side of the bot, refer to that FAQ for more.
 
 Currently, the accepted `time` parameters are: `syndicated`, `daytime`, `primetime`, `gb`, `au`, `kids`.
-
-Extra info such as unused BR category choices in the modern era and puzzles from other versions will be added in due time.
 
 Examples given below may have output truncated for length.
 
@@ -24,7 +24,7 @@ Conditions are "words" separated by semicolons (`;`). You can have up to 26 cond
 
 # COLUMNS
 
-Condition types mostly correspond to filtering data based on a column. wayo.py's compendium has the following columns on the data:
+Condition types mostly correspond to filtering data based on a column. wayo.py's compendium has the following columns on the puzzle data:
 
 - season `S`, from 1 to 39 (and onward!)
 - date `DATE`, the airdate / intended date (alias `D`)
@@ -38,6 +38,19 @@ Condition types mostly correspond to filtering data based on a column. wayo.py's
 - the actual puzzle, `PUZZLE` (alias `P`)
 - the category, `CATEGORY` (alias `CAT`)
 - `CLUE/BONUS`, the bonus money question for certain categories, or crossword clue (aliases `CLUE`, `BONUS`, `CB`, `B`)
+
+For `search_choices`, there are the `S`, `DATE`, `EP`, `E/S`, and `PUZZLE` columns like the above, along with:
+
+- All three category choices (`CHOICE#` where `#` is one of `123`, aliases `C#`)
+- The actual category chosen, `CHOSEN` (alias `C`), always matching with `CATEGORY` above
+- The position `POS` of the category chosen in the list of all the choices (one of `123`)
+
+For `search_sched`, there are `EP` and `DATE` columns like the above, along with:
+
+- Some `DATE`s are incomplete and be searched as a string column via `DATE_STR` (alias `DS`). These are mixed in with proper `DATE`s in one column in output.
+- `RED` (alias `R`), `YELLOW` (aliases `YEL`, `Y`), `BLUE` (alias `BL`) for contestant name(s) on that podium
+- `PODIUM` (aliases `P`, `CONTESTANT`, `CON`) as shorthand for any of `RED/YELLOW/BLUE`
+- `THEME` (alias `T`) for theme of the episode if it exists.
 
 # NUMBER EXPRESSIONS
 
@@ -90,7 +103,7 @@ These columns are whole numbers, so any combo of number expressions can be done 
 * S is 30
 * E/S is one of 90,135
 
-S         DATE    EP  E/S  RD  PP                                        PUZZLE        CATEGORY
+ S         DATE    EP  E/S  RD  PP                                        PUZZLE        CATEGORY
 30  Jan 18 2013  5745  090  T1                           HEAD OUT ON THE HIGHWAY     SONG LYRICS
 30  Jan 18 2013  5745  090  T2                                UPSTANDING CITIZEN          PERSON
 ...
@@ -107,7 +120,7 @@ A = S is 31, or greater than 35 and at most 39
 B = EP is at least 6010 and at most 6015
 C = E/S is 195
 
-S         DATE    EP  E/S  RD  PP                                  PUZZLE             CATEGORY       CLUE
+ S         DATE    EP  E/S  RD  PP                                  PUZZLE             CATEGORY       CLUE
 31  Apr 25 2014  6010  160  T1                               NEW HAMPSHIRE           ON THE MAP
 ...
 36  Jun 07 2019  7020  195  R2                     BISHOP KNIGHT KING ROOK            CROSSWORD  CHECKMATE
@@ -122,7 +135,7 @@ A date given in the given format (default mm/dd/yy, and can be changed with the 
 ```
 8 puzzles found for DATE is on or after 01/01/11 and earlier than 01/04/11
 
-S         DATE    EP  E/S  RD  PP                           PUZZLE             CATEGORY
+ S         DATE    EP  E/S  RD  PP                           PUZZLE             CATEGORY
 28  Jan 03 2011  5346  081  T1                           BALD EAGLE         LIVING THING
 ...
 28  Jan 03 2011  5346  081  BR                             HAZY SKY                THING
@@ -138,7 +151,7 @@ There are four "subconditions" which you can query: the `YEAR` (alias `Y`), the 
 * WEEKDAY of DATE is on or after a Wednesday
 * S is 39
 
-S         DATE    EP  E/S  RD  PP                              PUZZLE               CATEGORY        CLUE
+ S         DATE    EP  E/S  RD  PP                              PUZZLE               CATEGORY        CLUE
 39  Jan 26 2022  7523  098  T1                  THE TRUTH IS OUT THERE               TV QUOTE
 ...
 39  Jan 26 2022  7523  098  R2                 BUGGY SHAMPOO SEAT BOOM              CROSSWORD  BABY _____
@@ -148,7 +161,7 @@ S         DATE    EP  E/S  RD  PP                              PUZZLE           
 39  Mar 30 2022  7568  143  BR                           BROWSE AROUND                 PHRASE
 ```
 
-## UC, PP, RL, PR
+## PP, RL, PR
 
 These are "boolean" columns in that they're either True or False. So simply `cond=column` looks if the puzzle is marked with this column, `cond=column;False` looks if the row is specifically not marked with this column. (`cond=column;True` is also allowed, but there is the shorthand above.) And any alias for True/False as per the top of this document is allowed.
 
@@ -161,13 +174,17 @@ Note that in output, since there can be a long output and there is only one head
 * is a RL puzzle
 * E/S is less than 40, or at least 170
 
-S         DATE    EP  E/S  RD  RL                                        PUZZLE   CATEGORY   BONUS
+ S         DATE    EP  E/S  RD  RL                                        PUZZLE   CATEGORY   BONUS
 11  Oct 12 1993  1977  027  R3  RL                             PROSPECTIVE BUYER     PERSON  EUROPE
 11  May 13 1994  2120  170  R4  RL                             CHICKEN A LA KING     PHRASE   KHAKI
 ...
 12  Oct 12 1994  2173  028  R4  RL                  GETTING A GOOD NIGHT'S SLEEP      EVENT   GHOST
 12  Oct 27 1994  2184  039  R4  RL                     STARING UP AT THE CEILING     PHRASE    TENT
 ```
+
+## UC
+
+This used to be a boolean column, but a summer 2023 update to the compendium added specificity to what is uncertain, so it became a string (text) column. It can be empty, the DATE (`D`), EP (`#`), or both (`B`).
 
 ## ROUND, CATEGORY
 
@@ -204,8 +221,8 @@ Here are some helpful regular expressions to get you started here:
 * PUZZLE matches "M" at least 9 time(s)
 * PUZZLE matches "A" at least 9 time(s)
 
-S         DATE    EP  E/S  RD  PP                                            PUZZLE        CATEGORY                                         BONUS
-7  Nov 01 1989  1213  043  R3                   SEPTEMBER OCTOBER NOVEMBER DECEMBER          THINGS
+ S         DATE    EP  E/S  RD  PP                                            PUZZLE        CATEGORY                                         BONUS
+ 7  Nov 01 1989  1213  043  R3                   SEPTEMBER OCTOBER NOVEMBER DECEMBER          THINGS
 ...
 21  Sep 12 2003  3905  005  R3                  QUEEN ELIZABETH CELEBRATES MILESTONE        HEADLINE  ANNIVERSARY OF CORONATION: 40TH? 50TH? 60TH?
 21  May 25 2004  4087  187  R3              A LONG TIME AGO IN A GALAXY FAR FAR AWAY       QUOTATION
@@ -229,7 +246,7 @@ S         DATE    EP  E/S  RD  PP                                            PUZ
 * RD matches "R[1-7]"
 * PUZZLE matches "[AEIOU]" at least 18, or at most 2 times
 
-S         DATE    EP  E/S  RD                                                PUZZLE           CATEGORY         BONUS
+ S         DATE    EP  E/S  RD                                                PUZZLE           CATEGORY         BONUS
 25  Jan 15 2008  4772  092  R5                                             THUMBTACK   AROUND THE HOUSE
 25  Jan 16 2008  4773  093  R6                                          HURRY-SCURRY         RHYME TIME
 26  Mar 31 2009  5022  147  R3     VOTING FOR YOUR FAVORITE AMERICAN IDOL CONTESTANT           SHOW BIZ
@@ -255,7 +272,7 @@ Word count of a puzzle is available as `WORD_COUNT` (alias `WC`):
 ```
 1 puzzle found in SYNDICATED for total word count is greater than 12
 
-S         DATE    EP  E/S  RD                                         PUZZLE  CATEGORY
+ S         DATE    EP  E/S  RD                                         PUZZLE  CATEGORY
 14  May 07 1997  2703  168  R2  I HATE TO SAY I TOLD YOU SO BUT I TOLD YOU SO    PHRASE
 ```
 
@@ -265,7 +282,7 @@ The basic `WORD` condition looks to see if the given `regex` is part of any word
 ```
 14 puzzles found in SYNDICATED for any word is exactly "SLOW"
 
-S         DATE    EP  E/S  RD  PR                                            PUZZLE             CATEGORY         CLUE
+ S         DATE    EP  E/S  RD  PR                                            PUZZLE             CATEGORY         CLUE
 11  Feb 02 1994  2053  103  BR                                           SLOW MOTION               PHRASE
 ...
 35  Mar 28 2018  6773  143  R2                               SQUARE DISCO WALTZ SLOW            CROSSWORD  LET'S DANCE
@@ -279,7 +296,7 @@ A positive or negative number (not 0) can be given as the last word in the condi
 ```
 104 puzzles found in SYNDICATED for last word matches "BEACH(ES)?"
 
-S         DATE    EP  E/S  RD  PP                                     PUZZLE             CATEGORY
+ S         DATE    EP  E/S  RD  PP                                     PUZZLE             CATEGORY
 13  Jan 17 1996  2433  093  R4                               WHITE SAND BEACH                PLACE
 13  Feb 20 1996  2457  117  R1                            A LUAU ON THE BEACH                EVENT
 18  May 21 2001  3501  186  T1                             A DAY AT THE BEACH                EVENT
@@ -324,7 +341,7 @@ We can look at the total number of letters with `LENGTH` (alias `L`) as a number
 * RD matches "R\d"
 * is not a PR puzzle
 
-S         DATE    EP  E/S  RD   PUZZLE      CATEGORY BONUS
+ S         DATE    EP  E/S  RD   PUZZLE      CATEGORY BONUS
 10  Jan 13 1993  1848  093  R1   OZ DOG          CLUE  TOTO
 12  Mar 10 1995  2270  125  R6   GLOVES        THINGS
 16  Feb 09 1999  3037  112  R5   MARINA         PLACE
@@ -345,7 +362,7 @@ To count how many different letters actually show up in a puzzle, there's `LENGT
 ```
 10 puzzles found for Total number of unique letters is at least 20
 
-S         DATE    EP  E/S  RD  PP                                                 PUZZLE        CATEGORY
+ S         DATE    EP  E/S  RD  PP                                                 PUZZLE        CATEGORY
 15  Nov 27 1997  2794  064  R2       UP ABOVE THE WORLD SO HIGH LIKE A DIAMOND IN THE SKY       QUOTATION
 16  Dec 29 1998  3007  082  R2      WATCHING THE NEW YEAR'S EVE BALL DROP IN TIMES SQUARE           EVENT
 17  Nov 24 1999  3178  058  R2                      A SECOND HELPING OF TURKEY WITH GRAVY           THING
@@ -372,8 +389,8 @@ The aliases are obvious as well (`C`, `CU`).
 * RD matches "BR"
 * DATE is on or after 06/03/88
 
-S         DATE    EP  E/S  RD                  PUZZLE             CATEGORY
-6  Sep 20 1988  0987  012  BR  THE SPIRIT OF ST LOUIS                TITLE
+ S         DATE    EP  E/S  RD                  PUZZLE             CATEGORY
+ 6  Sep 20 1988  0987  012  BR  THE SPIRIT OF ST LOUIS                TITLE
 29  Mar 28 2012  5598  138  BR      BASIC REQUIREMENTS               THINGS
 30  Oct 02 2012  5667  012  BR     PREVIOUS EXPERIENCE               PHRASE
 30  Nov 29 2012  5709  054  BR     EXPERT IN THE FIELD               PERSON
@@ -391,7 +408,7 @@ S         DATE    EP  E/S  RD                  PUZZLE             CATEGORY
 * total unique number of JQXZ is at least 2
 * RD matches "BR"
 
-S         DATE    EP  E/S  RD                    PUZZLE               CATEGORY
+ S         DATE    EP  E/S  RD                    PUZZLE               CATEGORY
 18  May 18 2001  3500  185  BR                JAZZ IT UP                 PHRASE
 21  Apr 15 2004  4059  159  BR                  JURY BOX                  PLACE
 ...
@@ -405,8 +422,8 @@ As a convenience, "CONSONANT" can be put in as an alias for every consonant:
 ```
 9 puzzles found for total unique number of BCDFGHJKLMNPQRSTVWXYZ is at most 1
 
-S         DATE    EP  E/S  RD      PUZZLE  CATEGORY
-6  Jan 31 1989  1072  097  BR       ONION     THING
+ S         DATE    EP  E/S  RD      PUZZLE  CATEGORY
+ 6  Jan 31 1989  1072  097  BR       ONION     THING
 10  Oct 08 1992  1779  024  BR         ZOO     PLACE
 11  May 12 1994  2119  169  BR       YO-YO     THING
 11  Jun 06 1994  2136  186  BR        MEMO     THING
@@ -422,7 +439,7 @@ S         DATE    EP  E/S  RD      PUZZLE  CATEGORY
 One way to dissect a puzzle is to map every letter to its frequency in the puzzle. For example, let's look at the highest consonant multiple we know of in the compendium:
 
 ```
-S         DATE    EP  E/S   RD                                    PUZZLE     CATEGORY
+ S         DATE    EP  E/S   RD                                    PUZZLE     CATEGORY
 31  Oct 11 2013  5870  020   R2  SUMMERTIME SUMMERTIME SUM SUM SUMMERTIME  SONG LYRICS
 ```
 

@@ -5,6 +5,7 @@ from operator import attrgetter, or_
 from typing import Any, Union, Optional, TypeVar
 
 import polars as pl
+import polars.selectors as cs
 from cachetools.func import lfu_cache
 from datetime_matcher import DatetimeMatcher
 
@@ -21,7 +22,7 @@ def build_flag_expr(col_name, flags: frozenset[int]):
         sub_expr.append(pl.col(col_name) == 0)
     if flags != {0}:
         sub_expr.append((pl.col(col_name) & pl.repeat(reduce(or_, flags - {0}), pl.col(col_name).count())).cast(pl.Boolean))
-    return pl.any(sub_expr) if len(sub_expr) > 1 else sub_expr[0]
+    return pl.any_horizontal(sub_expr) if len(sub_expr) > 1 else sub_expr[0]
 
 
 _ppp_newline = re.compile('(?:^ | (\n) | $)')
@@ -160,12 +161,18 @@ def build_int_expression(base_expr, conds, date_hybrid=False, mult_hybrid=False,
             raise ValueError(f'Malformed number expression: {c}')
 
     if len(conds) > 1:
-        return pl.any(cond_builder) if expr_only else (pl.any(cond_builder), ', or '.join(desc_builder), plural)
+        return (
+            pl.any_horizontal(cond_builder)
+            if expr_only
+            else (pl.any_horizontal(cond_builder), ', or '.join(desc_builder), plural)
+        )
     else:
         return cond_builder[0] if expr_only else (cond_builder[0], desc_builder[0], plural)
 
 
 _DTM = DatetimeMatcher()
+
+
 # extract_dates in ^ this third-party library was iffy for me
 # but the match functionality taking care of datetime formats under the hood
 # was very useful, even though it's strict matching
@@ -199,7 +206,7 @@ def build_date_expression(base_expr, conds, dateFormat):
             raise ValueError(f'Malformed date expression: {c}')
 
     if len(conds) > 1:
-        return pl.any(cond_builder), ', or '.join(desc_builder)
+        return pl.any_horizontal(cond_builder), ', or '.join(desc_builder)
     else:
         return cond_builder[0], desc_builder[0]
 
@@ -245,9 +252,9 @@ def build_lineup_expr(
         e = [ee & build_flag_expr(f'PG{s}_f', frozenset(flags)) for ee, s in zip(e, slots)]
 
     if freqs:
-        return sum([ee.cast(pl.UInt8) for ee in e]).is_in(tuple(freqs))
+        return pl.sum_horizontal(ee.cast(pl.UInt8) for ee in e).is_in(tuple(freqs))
     else:
-        return pl.any(e)
+        return pl.any_horizontal(e)
 
 
 def transform_str_to_dts(e, dateFormat):

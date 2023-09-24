@@ -1,3 +1,7 @@
+# putty root@208.167.253.69 -pw Tk1+GkxmQq+$AXs$
+# immortal -d wayo-py -l log.log python3.10 wayo.py
+# https://janakiev.com/blog/python-background/
+
 import asyncio
 import io
 import itertools
@@ -9,7 +13,16 @@ import traceback
 import aiohttp
 import discord
 
+# import discord.opus
 from discord.ext import commands
+
+# try:
+#     import uvloop
+
+#     uvloop.install()
+#     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+# except ImportError:
+#     pass
 from datetime import *
 
 import polars as pl
@@ -17,7 +30,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from requests_html import AsyncHTMLSession
 
 from dropboxwayo import dropboxwayo
+from secretswayo import WAYO_PY_TOKEN, PASTEBIN_TOKEN, PASTEBIN_PW
 from util import SCHEDULER_TZ
+
+# https://discord.com/api/oauth2/authorize?client_id=280172398974730250&permissions=0&scope=applications.commands%20bot
 
 DEBUG = 'DEBUG' in sys.argv
 _log = logging.getLogger('wayo_log')
@@ -81,21 +97,19 @@ class WayoPyBot(commands.Bot):
         self.SCHEDULER.start()
 
         if not DEBUG:
-	    # heroku refreshes the bot every 24 + random amount of time ("jitter")
-	    # so to control that, force a shutdown (heroku will restart)
-            # in the very early morning, US time.
-            @self.SCHEDULER.scheduled_job('cron', hour='5', minute='30')
-            async def timed_quit():
-                try:
-                    await self.close()
-                except:
-                    pass
+            # @self.scheduler.scheduled_job('date', run_date=datetime.now(tz=self.usetz) + dt)
+            # @self.SCHEDULER.scheduled_job('cron', hour='5', minute='30')
+            # async def timed_quit():
+            #     try:
+            #         await self.close()
+            #     except:
+            #         pass
 
-            _log.info('timed_quit set up')
+            # _log.info('timed_quit set up')
             await self.login_pastebin()
         else:
             self.loop.set_debug(True)
-            _log.info('Local debug is on. timed_quit not set up')
+            _log.info('Local debug is on instead of pastebin.')
 
         for ext in self.initial_extensions:
             await self.load_extension(ext)
@@ -110,9 +124,9 @@ class WayoPyBot(commands.Bot):
 
     async def login_pastebin(self):
         login_data = {
-            'api_dev_key': 'REDACTED',
+            'api_dev_key': PASTEBIN_TOKEN,
             'api_user_name': 'Wayoshi',
-            'api_user_password': 'REDACTED',
+            'api_user_password': PASTEBIN_PW,
         }
 
         login = await self.session.post("https://pastebin.com/api/api_login.php", data=login_data)
@@ -127,7 +141,7 @@ class WayoPyBot(commands.Bot):
         if self.pastebin_key:
             data = {
                 'api_option': 'paste',
-                'api_dev_key': 'REDACTED',
+                'api_dev_key': PASTEBIN_TOKEN,
                 'api_paste_code': txt,
                 'api_paste_name': fn,
                 'api_paste_private': 1,
@@ -190,7 +204,7 @@ class WayoPyBot(commands.Bot):
                             extra = f' Perhaps you meant `{q}`?' if q else ''
                     except:
                         extra = ''
-                    await ctx.send(f'{error}.{extra}', ephemeral=True)
+                    await ctx.send(f'{error}.{extra}')
                 else:
                     _log.info(f'\tStandard commands.CommandError, {error.__class__.__name__}: {error}', file=sys.stderr)
 
@@ -207,6 +221,7 @@ WB = WayoPyBot()
 
 # debug check
 if DEBUG:
+
     @WB.check
     async def debug_check(ctx):
         return ctx.author == WB.owner
@@ -281,10 +296,10 @@ async def sync(ctx, guilds: commands.Greedy[commands.GuildConverter], spec: Opti
 
 
 if __name__ == '__main__':
-    pl.toggle_string_cache(True)
+    pl.enable_string_cache(True)
 
     (
-        pl.cfg.Config.set_tbl_cols(-1)
+        pl.Config.set_tbl_cols(-1)
         .set_tbl_rows(-1)
         .set_tbl_width_chars(1_000)
         .set_fmt_str_lengths(100)
@@ -294,6 +309,29 @@ if __name__ == '__main__':
         .set_tbl_hide_column_data_types()
         .set_tbl_hide_dtype_separator()
     )
+
+    # if sys.platform.startswith('linux') and datetime.now(tz=pytz.timezone('US/Eastern')).weekday() > 4:
+    # quit()
+
+    # https://stackoverflow.com/questions/27981545/suppress-insecurerequestwarning-unverified-https-request-is-being-made-in-pytho
+    import urllib3, bs4
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    import warnings
+
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+    warnings.filterwarnings("ignore", category=bs4.XMLParsedAsHTMLWarning)
+
+    # def save_and_quit(signum, frame):
+    # 	_log.info('SIGTERM received, quitting gracefully...')
+    # 	WB.scheduler.shutdown(wait=False)
+    # 	for t in asyncio.Task.all_tasks(WB.loop):
+    # 		t.cancel()
+    # 	_log.info('Graceful quit successful, exiting... (will potentially see some destroyed tasks)')
+
+    # signal.signal(signal.SIGTERM, save_and_quit)
+    # signal.signal(signal.SIGINT, save_and_quit)
 
     # logging
     # logger = logging.getLogger('wayo_log')
@@ -306,7 +344,7 @@ if __name__ == '__main__':
 
     # discord.py official 2.0 way to start a bot (cog loading abstracted to in-class)
     WB.run(
-        'REDACTED',
+        WAYO_PY_TOKEN,
         log_handler=lh,
         log_level=logging.INFO,
     )  # 204774679582343168

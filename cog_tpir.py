@@ -30,6 +30,7 @@ from util import (
     season_portion_str,
     send_long_mes,
 )
+from util2 import SI
 
 
 class PGGroupAddView(dui.View):
@@ -61,10 +62,12 @@ class PGGroupFlags(commands.FlagConverter, delimiter='=', case_insensitive=True)
     remove: Tuple[Union[PGConverter, PGGroupConverter], ...] = []
 
 
+_DEFAULT_PLINKO_VALS = [100, 500, 1000, 10000]
+
+
 class TPIRCog(commands.Cog, name='TPIR'):
     """Commands related to The Price is Right in general. (See Lineup section for more)."""
 
-    DEFAULT_PLINKO_VALS = [100, 500, 1000, 10000]
     cent_helper = {f'gp{i}': 'A price in dollars & cents. Will be rounded to nearest cent.' for i in range(1, 7)}
 
     def __init__(self, bot):
@@ -88,7 +91,7 @@ class TPIRCog(commands.Cog, name='TPIR'):
 
         An active season is one the game has at least one playing in."""
         if not pgs:
-            await ctx.send('`No PGs given. (Check your spelling from leftmost.)`', ephemeral=True)
+            await ctx.send('`No PGs given. (Check your spelling from leftmost.)`')
         else:
             l = [f'{pg}: ' + season_portion_str(pg.activeSeasons) for pg in list(value_chain(*pgs))]
             if len(l) > 1:
@@ -114,16 +117,16 @@ class TPIRCog(commands.Cog, name='TPIR'):
         # The bot will react with an OK emoji when making a group. Confirm it is the mapping you wanted by reacting with the same OK emoji, and the bot will add the mapping and react with a checkmark. If you made a mistake, just let it go and after a few seconds it will react with an X emoji, and no mapping will be added.
 
         if re.search(r'\s+', group):
-            await ctx.send('`Group names cannot contain spaces.`', ephemeral=True)
+            await ctx.send('`Group names cannot contain spaces.`')
             return
 
         if pgs:
             if group in PG.partition_lookup:
-                await ctx.send('`This name is already a PGGroup.`', ephemeral=True)
+                await ctx.send('`This name is already a PGGroup.`')
                 return
             pgs = list(value_chain(*pgs))
             if len(pgs) == 1:
-                await ctx.send("`There's no point to a PGGroup for a single PG.`", ephemeral=True)
+                await ctx.send("`There's no point to a PGGroup for a single PG.`")
             else:
                 s = SortedSet(pgs, key=NAME_ATTRGET)
                 assert len(s) == len(pgs)
@@ -143,16 +146,16 @@ class TPIRCog(commands.Cog, name='TPIR'):
                 s = ', '.join(str(pg) for pg in sorted(PG.partition_table[g], key=NAME_ATTRGET))
                 await ctx.send(f'`{g}: {s}`')
             else:
-                await ctx.send(f'`"{group.upper()}" is not a PGGroup.`', ephemeral=True)
+                await ctx.send(f'`"{group.upper()}" is not a PGGroup.`')
 
     @pg.command(name='active_in', aliases=['activeIn', 'ai'])
     async def activeIn(self, ctx, start: SEASON_RANGE, end: Optional[SEASON_RANGE]):
         """Lists all games active in the given season(s)."""
         if end and start > end:
-            await ctx.send('`Start season is more than end season.`', ephemeral=True)
+            await ctx.send('`Start season is more than end season.`')
             return
 
-        portion = P.closed(start, end) if end else P.singleton(start)
+        portion = SI.closed(start, end) if end else SI.singleton(start)
         pg_str = ', '.join(str(pg) for pg in sorted(PG_WILDCARD, key=NAME_ATTRGET) if pg.activeIn(portion))
         await ctx.send(f'`{pg_str}`')
 
@@ -160,7 +163,7 @@ class TPIRCog(commands.Cog, name='TPIR'):
     async def pgAbbr(self, ctx, pgs: commands.Greedy[PGConverter]):
         """Lists the internal alternative keywords that can be used in other commands to identify the PGs given."""
         if not pgs:
-            await ctx.send('`No PGs given. (Check your spelling from left-most.)`', ephemeral=True)
+            await ctx.send('`No PGs given. (Check your spelling from left-most.)`')
         else:
             l = [f'{pg.sheetName}: ' + ', '.join(pg.altNames) for pg in pgs]
             if len(l) > 1:
@@ -186,12 +189,12 @@ class TPIRCog(commands.Cog, name='TPIR'):
     @pg.command(name='list', aliases=['l'])
     async def listPGs(self, ctx):
         """Lists all Pricing Games wayo.py has."""
-        await ctx.send(f'`{self.all_pg_str}`', ephemeral=True)
+        await ctx.send(f'`{self.all_pg_str}`')
 
     @pg.command(name='list_groups', aliases=['listGroups', 'lg'])
     async def listPGGroups(self, ctx):
         """Lists all default Pricing Games Groups wayo.py has."""
-        await ctx.send(f'`{self.all_pggroup_str}`', ephemeral=True)
+        await ctx.send(f'`{self.all_pggroup_str}`')
 
     @commands.hybrid_group(aliases=['analyze', 'ta'], case_insensitive=True)
     async def tpiranalyze(self, ctx):
@@ -206,14 +209,14 @@ class TPIRCog(commands.Cog, name='TPIR'):
         ctx,
         chip_count: commands.Range[int, 1, 5],
         amounts: commands.Greedy[NONNEGATIVE_INT] = commands.parameter(
-            default=lambda ctx: DEFAULT_PLINKO_VALS, displayed_default=str(tuple(DEFAULT_PLINKO_VALS))
+            default=lambda ctx: _DEFAULT_PLINKO_VALS, displayed_default=str(tuple(_DEFAULT_PLINKO_VALS))
         ),
     ):
         """Find all possible winning amounts for a Plinko playing with a certain chip count.
 
         If providing custom values, must be exactly four of them. Zero is automatically added as the 5th amount."""
         if len(set(amounts)) != 4:
-            await ctx.send('`Exactly four unique, positive amounts for Plinko required.`', ephemeral=True)
+            await ctx.send('`Exactly four unique, positive amounts for Plinko required.`')
             return
 
         plinko_vals = [0] + amounts
@@ -242,7 +245,8 @@ class TPIRCog(commands.Cog, name='TPIR'):
     ):
         """Find all winning solutions for the six prices in a Pay the Rent setup.
 
-        Stats are also given at the bottom: how many unique combinations are there (usually 180, can be a bit less), and then how many of those can win $1000 but not $5000, $5000 but not $10000, etc."""
+        Stats are also given at the bottom: how many unique combinations are there (usually 180, can be a bit less), and then how many of those can win $1000 but not $5000, $5000 but not $10000, etc.
+        """
         gps = [gp1, gp2, gp3, gp4, gp5, gp6]
         await ctx.send('```\n{}```'.format(ranalyze(gps)))
 
@@ -268,10 +272,10 @@ class TPIRCog(commands.Cog, name='TPIR'):
         """Find all winning solutions for the five prices in a Grocery Game setup."""
         gps = [gp1, gp2, gp3, gp4, gp5]
         if not len(set(gps)) == len(gps):
-            await ctx.send('`All GP prices must be unique.`', ephemeral=True)
+            await ctx.send('`All GP prices must be unique.`')
             return
         elif max < min:
-            await ctx.send('`The winning range must be at least a single price.`', ephemeral=True)
+            await ctx.send('`The winning range must be at least a single price.`')
             return
 
         async with ctx.typing():
@@ -319,15 +323,15 @@ class TPIRCog(commands.Cog, name='TPIR'):
 
     async def cog_command_error(self, ctx, e):
         if isinstance(e, commands.RangeError):
-            await ctx.send(f'`{e}`', ephemeral=True)
+            await ctx.send(f'`{e}`')
         elif isinstance(e, commands.BadArgument):
-            await ctx.send(f'`{e}`', ephemeral=True)
+            await ctx.send(f'`{e}`')
         elif hasattr(e, 'original') and isinstance(e.original, AssertionError):
-            await ctx.send('`All PGs must be unique.`', ephemeral=True)
+            await ctx.send('`All PGs must be unique.`')
         elif isinstance(e, commands.ConversionError) and isinstance(e.original, KeyError):
-            await ctx.send(f'`The following is not a PG (or PGGroup): {e.original}`', ephemeral=True)
+            await ctx.send(f'`The following is not a PG (or PGGroup): {e.original}`')
         else:
-            await ctx.send(f'`{e}`', ephemeral=True)
+            await ctx.send(f'`{e}`')
 
 
 async def setup(bot):

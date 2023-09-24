@@ -73,7 +73,7 @@ class GRModCog(commands.Cog, name='GRMod'):
 
     async def cog_command_error(self, ctx, e):
         if isinstance(e, commands.CheckFailure):
-            await ctx.send("`This command can only be run by a moderator or higher on the G-R.net server.`", ephemeral=True)
+            await ctx.send("`This command can only be run by a moderator or higher on the G-R.net server.`")
 
 
 async def setup(bot):

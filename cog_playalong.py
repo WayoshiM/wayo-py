@@ -10,6 +10,9 @@ import texttable
 from discord import app_commands
 from discord.ext import commands
 
+from dropboxwayo import dropboxwayo
+from pg import CURRENT_SEASON
+from secretswayo import GR_PW
 from util import (
     ARP_RANGE,
     MAX_MES_SIZE,
@@ -43,7 +46,7 @@ async def get_gr_css(asession, logged_in, cookie_length):
             'http://www.golden-road.net/index.php?action=login2',
             data={
                 'user': 'Wayoshi',
-                'passwrd': 'REDACTED',
+                'passwrd': GR_PW,
                 'cookielength': cookie_length,
                 'hash_passwrd': '',
                 session_var: session_id,
@@ -122,7 +125,7 @@ async def get_bids(asession, logged_in, cookie_length, csshour, cssmin, csssec):
     for u, ts, m in reversed(pms):
         if ts.date() == date.today() and min_time <= ts.time() <= max_time:
             bd = [bid for bid in get_message_nums(m) if bid >= 10000]
-            if len(bd) >= 2 and u not in csv_dict:
+            if len(bd) >= 2:
                 csv_dict[u] = bd[:2]
 
     return (csv_dict, max_time)
@@ -246,7 +249,8 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
 
         Hour is 24-hour format. For primetime, most shows would thus be 20 (8pm-9pm).
 
-        Pages is the number of private message pages on G-R.net (15 per page) to search for bids. 3 is almost always sufficient."""
+        Pages is the number of private message pages on G-R.net (15 per page) to search for bids. 3 is almost always sufficient.
+        """
 
         # If "post" is in the extra string, post these raw results to the CSS forum. Only Wayoshi can do this.
 
@@ -257,7 +261,7 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
                     self.bot.asession, self.logged_in, self.cookie_length, csstime.hour, csstime.minute, csstime.second
                 )
             except RuntimeError as e:
-                await ctx.send(e, ephemeral=True)
+                await ctx.send(e)
                 return
             # del cssbids['tpirfan20251']
 
@@ -274,7 +278,7 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
 
             # await ctx.channel.purge(limit=None, before=ctx.message, check=lambda m : not m.pinned)
 
-            await ctx.send("Today's cutoff time is `" + cutoff_time.strftime('%H:%M:%S') + '`.')
+            m0 = await ctx.send("Today's cutoff time is `" + cutoff_time.strftime('%H:%M:%S') + '`.')
 
             def construct_line(player, b1, b2):
                 diff1 = arp1 - b1
@@ -325,43 +329,57 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
             arp2_string = arp2_string[:-3] + ',' + arp2_string[-3:]
 
             for m, td, s in zip(mes, tdraw, start):
-                while not self.stop_csslive:
-                    s += max_player_len + 6  # three spaces, two |'s, one $
-                    await m.edit(content=f'```{td[:s]}```')
-                    for k in range(0, 2):
-                        arps = arp2_string if k else arp1_string
-                        await asyncio.sleep(2)
+                stop = False
+                try:
+                    while not stop:
+                        async with self.lock:
+                            stop = self.stop_csslive
+                        if stop:
+                            continue
 
-                        first_extra_wait = False
-                        for i in range(0, 3):
-                            s += 2
-                            await m.edit(content=f'```{td[:s]}```')
-                            await asyncio.sleep(1)
+                        s += max_player_len + 6  # three spaces, two |'s, one $
+                        await m.edit(content=f'```{td[:s]}```')
+                        for k in range(0, 2):
+                            arps = arp2_string if k else arp1_string
+                            await asyncio.sleep(2)
 
-                            if i == 0 and td[s - 2 : s] == arps[:2]:
-                                await asyncio.sleep(1.5)
-                                first_extra_wait = True
-                            elif first_extra_wait and td[s - 1] == arps[3]:
-                                await asyncio.sleep(3)
-                                first_extra_wait = False
+                            first_extra_wait = False
+                            for i in range(0, 3):
+                                s += 2
+                                await m.edit(content=f'```{td[:s]}```')
+                                await asyncio.sleep(1)
 
-                        if not k:
-                            s += 14
-                            await m.edit(content=f'```{td[:s]}```')
+                                if i == 0 and td[s - 2 : s] == arps[:2]:
+                                    await asyncio.sleep(1.5)
+                                    first_extra_wait = True
+                                elif first_extra_wait and td[s - 1] == arps[3]:
+                                    await asyncio.sleep(3)
+                                    first_extra_wait = False
 
-                    try:
-                        while td[s] != '\n':
+                            if not k:
+                                s += 14
+                                await m.edit(content=f'```{td[:s]}```')
+
+                        try:
+                            while td[s] != '\n':
+                                s += 1
                             s += 1
-                        s += 1
-                        while td[s] != '\n':
+                            while td[s] != '\n':
+                                s += 1
                             s += 1
-                        s += 1
-                    except IndexError:
+                        except IndexError:
+                            break
+
+                        await m.edit(content=f'```{td[:s]}```')
+                        await asyncio.sleep(3)
+                except (OSError, commands.CommandError) as e:
+                    await ctx.send(f'`I hit an error, fully revealing this part of the results now: {e}`')
+                    await asyncio.sleep(1)
+                finally:
+                    if stop:
+                        await m.delete()
+                    else:
                         await m.edit(content=f'```{td}```')
-                        break
-
-                    await m.edit(content=f'```{td[:s]}```')
-                    await asyncio.sleep(3)
 
         # if 'post' in extra and ctx.author == WB.wayo_user:
         # 	subject = 'CSS Raw Results for {0:s}'.format(date.now().strftime('%m/%d/%Y'))
@@ -369,6 +387,9 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
         # 	from gr import create_topic
         # 	gr.create_topic(13, subject, message)
         # 	del create_topic
+
+        if self.stop_csslive:
+            await m0.delete()
 
         async with self.lock:
             self.stop_csslive = False
@@ -382,6 +403,26 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
         async with self.lock:
             self.stop_csslive = True
         await ctx.send('Stopping CSS Live... get the parameter order right this time!')
+
+    @css.command()
+    async def info(self, ctx, theme1: str.upper, placard1: str.upper, theme2: str.upper, placard2: str.upper):
+        """Add the info of today's SCs to Wayoshi's Dropbox text file. Thanks for helping him!"""
+        await ctx.message.add_reaction('🚧')
+
+        txt = ''
+        for arg in ctx.args[2:5]:
+            txt += arg + ('\t' * max(1, 5 - len(arg) // 4))
+        txt += ctx.args[-1]
+
+        res = await asyncio.to_thread(
+            dropboxwayo.update_str,
+            date.today().strftime('%m/%d/%y') + '\t' + txt + '\n',
+            f'/gr/css/sc_info_{CURRENT_SEASON-32}.txt',
+            False,
+        )
+
+        await ctx.message.remove_reaction('🚧', ctx.bot.user)
+        await ctx.message.add_reaction('❌' if 'failed' in res else '✅')
 
     async def csslive_check(self, ctx):
         return ctx.channel == self._csslive_channel
@@ -448,7 +489,7 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
     ):
         """Calculate your FPG score."""
         if not self.master:
-            await ctx.send('Lineup not set yet (use `!fpg set`).', ephemeral=True)
+            await ctx.send('Lineup not set yet (use `!fpg set`).')
         else:
             await ctx.send(
                 '{}: `{}`'.format(
@@ -459,9 +500,9 @@ class PlayAlongCog(commands.Cog, name='PlayAlong'):
 
     async def cog_command_error(self, ctx, e):
         if isinstance(e, (commands.BadArgument, commands.RangeError)):
-            await ctx.send(f'`{e}`', ephemeral=True)
+            await ctx.send(f'`{e}`')
         elif isinstance(e, commands.ConversionError) and isinstance(e.original, KeyError):
-            await ctx.send(f'`The following is not a PG: {e.original}`', ephemeral=True)
+            await ctx.send(f'`The following is not a PG: {e.original}`')
 
     # @commands.command(hidden=True)
     # @commands.is_owner()

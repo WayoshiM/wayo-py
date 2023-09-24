@@ -14,7 +14,7 @@ import discord
 import discord.ui as dui
 import numpy as np
 import polars as pl
-import portion as P
+import polars.selectors as cs
 from discord.ext import commands
 from more_itertools import chunked, value_chain
 from sortedcontainers import SortedSet
@@ -50,6 +50,7 @@ from util_expr import (
     build_dt_q_expression,
     transform_str_to_dts,
 )
+from util2 import SI
 
 _col_name_remapping = {
     'SEASON': 'S',
@@ -154,7 +155,7 @@ def flag4str(s):
 
 def dateStr(arg):
     if re.search('\d', arg) or '%' not in arg:
-        raise commands.BadArgument(f'{s} is not a valid date string.')
+        raise commands.BadArgument(f'{arg} is not a valid date string.')
     else:
         return arg
 
@@ -163,19 +164,19 @@ def freqStr(arg):
     if re.fullmatch('(\d+([ywd]|mo))+', arg, re.I):
         return arg.lower()
     else:
-        raise commands.BadArgument(f'{s} is not a valid frequency string.')
+        raise commands.BadArgument(f'{arg} is not a valid frequency string.')
 
 
 def sortStr(arg):
     if re.fullmatch('([pd]|PROD|DATE)', arg, re.I):
         return 'prod' if arg[0] == 'p' else 'date'
     else:
-        return commands.BadArgument(f'{s} is not a valid sort string.')
+        return commands.BadArgument(f'{arg} is not a valid sort string.')
 
 
 def conflictNint(arg):
     if re.fullmatch(CONFLICTN_REGEX, arg, re.I):
-        return P.inf
+        return SI.inf
     else:
         i = int(arg)
         if i < 0:
@@ -189,15 +190,13 @@ async def trim_query(q: pl.LazyFrame, sortBy: str = 'prod', since: bool = False)
     if since:
         if byDate:
             q = q.select(
-                [
-                    pl.col('^(PROD|S|AIRDATE)$'),
-                    pl.col('AIRDATE').diff().dt.days().alias('SINCE'),
-                    pl.exclude('^(PROD|S|AIRDATE)$'),
-                ]
+                pl.col('PROD', 'S', 'AIRDATE'),
+                pl.col('AIRDATE').diff().dt.days().alias('SINCE'),
+                pl.exclude('PROD', 'S', 'AIRDATE'),
             )
             extra = 'day'
         else:
-            q = q.select([pl.col('PROD'), pl.col('PG_n').diff().alias('SINCE'), pl.exclude('PROD')])
+            q = q.select(pl.col('PROD'), pl.col('PG_n').diff().alias('SINCE'), pl.exclude('PROD'))
             extra = 'lineup'
 
         q = q.with_columns(
@@ -206,29 +205,30 @@ async def trim_query(q: pl.LazyFrame, sortBy: str = 'prod', since: bool = False)
                 + pl.when(pl.col('SINCE') == 1).then(pl.lit(f' {extra}')).otherwise(pl.lit(f' {extra}s'))
             ).fill_null('')
         )
-    return await asyncio.to_thread(q.select(pl.exclude('^PG\d?_.+$')).collect)
+    return await asyncio.to_thread(q.drop(cs.contains('_')).collect)
 
 
 def gen_lineup_submes(sub_df: pl.DataFrame, initial_str: str, time: str):
     q = sub_df.lazy()
 
     if notes_col := 'SPECIAL' if time == 'primetime' else '' if time == 'syndicated' else 'NOTES':
-        notes_check = sub_df.select(pl.all(pl.col(notes_col).is_null())).to_series()
+        notes_check = sub_df.select(pl.col(notes_col).is_null()).to_series()
         if notes_check.all():
             q = q.drop(notes_col)
         elif notes_check.any():
             q = q.with_columns(pl.col(notes_col).fill_null(''))
 
     if 'AIRDATE' in sub_df.columns:
-        if sub_df.select(pl.all(pl.col('INT. DATE') == pl.col('AIRDATE'))).to_series().all():
-            q = q.select(pl.exclude('INT. DATE'))
-        q = q.with_columns(pl.col('^.+DATE$').dt.strftime('%b %d %Y').fill_null('NEVER AIRED'))
+        if sub_df.select((pl.col('INT. DATE') == pl.col('AIRDATE')).all()).to_series().all():
+            q = q.drop('INT. DATE')
+        q = q.with_columns(cs.ends_with('DATE').dt.strftime('%b %d %Y').fill_null('NEVER AIRED'))
 
-        half_hour_check = sub_df.select(pl.all(pl.col('PG6').is_null())).to_series()
+    if time != 'syndicated':
+        half_hour_check = sub_df.select(pl.col('PG6').is_null()).to_series()
         if half_hour_check.all():
-            q = q.drop(['PG4', 'PG5', 'PG6'])
+            q = q.drop('PG4', 'PG5', 'PG6')
         elif half_hour_check.any():
-            q = q.with_columns(pl.col('^PG[4-6]$').fill_null(''))
+            q = q.with_columns(pl.col('PG4', 'PG5', 'PG6').fill_null(''))
 
     sub_df = q.collect()
 
@@ -382,11 +382,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
     # bases
 
-    @commands.hybrid_group(aliases=['l'], case_insensitive=True)
+    @commands.hybrid_group(aliases=['l'], invoke_without_command=True, case_insensitive=True)
     async def lineup(self, ctx):
         """Commands specifically related to viewing and editing TPiR lineups."""
-        if not ctx.invoked_subcommand:
-            await ctx.send('Invalid subcommand (see `help lineup`).')
+        await ctx.send('Invalid subcommand (see `help lineup`).')
 
     @commands.hybrid_group(aliases=['playings', 'playing', 'play', 'p'], invoke_without_command=True, case_insensitive=True)
     async def played(self, ctx):
@@ -401,27 +400,25 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         self.conflict_role = self.guild.get_role(493259556655202304)
         # _log.info(f'cog_lineup on_ready: fetched conflict_role as {self.conflict_role}')
 
-    async def cog_load(self):
-        dropboxfn = '/heroku/wayo-py/'
-        _log.info('start creating cs at ' + str(datetime.now()))
-        self.cs = await asyncio.to_thread(
-            ConflictSheet,
-            lambda fn: io.BytesIO(dropboxwayo.download(dropboxfn + fn)),
-            lambda iob, fn: dropboxwayo.upload(iob.read(), dropboxfn + fn),
-        )
-        _log.info('end creating cs at ' + str(datetime.now()))
-
-    async def cog_check(self, ctx):
-        return self.cs and self.cs.is_ready()
+    async def cog_before_invoke(self, ctx):
+        if not self.cs or not self.cs.is_ready():
+            m = await ctx.send('`Lineups need to be reloaded, give me a moment...`')
+            dropboxfn = '/heroku/wayo-py/'
+            _log.info('start creating cs at ' + str(datetime.now()))
+            self.cs = await asyncio.to_thread(
+                ConflictSheet,
+                lambda fn: io.BytesIO(dropboxwayo.download(dropboxfn + fn)),
+                lambda iob, fn: dropboxwayo.upload(iob.getvalue(), dropboxfn + fn),
+            )
+            _log.info('end creating cs at ' + str(datetime.now()))
+            await m.delete()
 
     async def cs_update(self, view):
         async with self.latest_lock:
             mes, prodNumber, pgps, retro = self.latest_conflict[view]
             _log.info('start updating & reloading cs at ' + str(datetime.now()))
-            await asyncio.to_thread(
-                self.cs.update, prodNumber, pgps, not retro, datetime.now(tz=SCHEDULER_TZ).date(), None, None
-            )
-            await asyncio.to_thread(self.cs.initialize)
+            today = datetime.now(tz=SCHEDULER_TZ).date()
+            await asyncio.to_thread(self.cs.update, prodNumber, pgps, not retro, today, today, None)
             _log.info('end cs at ' + str(datetime.now()))
             del self.latest_conflict[view]
             view.finish()
@@ -444,17 +441,21 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     ):
         """Generates a concurrence sheet (an overview of the full lineup's pair-concurrencies and slot info) for the provided pricing games. Note for slot info in daytime, numbers are adjusted to exclude any uncertain slotting, if applicable.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin.
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
 
-        PGs are all mapped to at least one single-word key. See the pastebin for a complete listing.
+        PGs are all mapped to at least one single-word key. See the FAQ for a complete listing.
 
         If prodNumber is given, and a certified user reacts to the bot-produced message with the dig emoji, this sheet (presumably from an actual Price episode) will be added or overwritten to the overall lineup data, based on how prodNumber ends (D/K for daytime, SP for primetime), with the given flags (such as non-car for a car, one-time rule change to a game, etc.). This will only have an effect in #daytime and #retrotime.
 
-        If hideSheet is true when prodNumber is also given, the lineup is parroted back instead of a conflict sheet. This is meant for shorthand lineup overwrites when the actual sheet is not of interest. By default this is true in #retrotime."""
+        If hideSheet is true when prodNumber is also given, the lineup is parroted back instead of a conflict sheet. This is meant for shorthand lineup overwrites when the actual sheet is not of interest. By default this is true in #retrotime.
+        """
 
         try:
             ep, epText, _ = await parse_time_options(ctx, options)
         except ValueError:
+            return  # error message sending taken care of in parse_time_options (could have factored in coding better)
+        except AssertionError as e:
+            await ctx.send(f'`Error parsing time options: {e.message}`')
             return
 
         raw_pgps = ctx.args[2:8]
@@ -465,11 +466,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             try:
                 row = (
                     self.cs.get('daytime')
-                    .select(pl.col('^(PROD|S|PG\d)$'))
+                    .select(pl.col('PROD', 'S') | cs.matches('^PG\d$'))
                     .row(by_predicate=pl.col('PROD') == options.prodNumber)
                 )
                 retro = True
-            except pl.exceptions.RowsException:
+            except pl.exceptions.RowsError:
                 retro = False
 
             if retro:
@@ -576,7 +577,6 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             mes, prodNumber, ad, ind, notes = self.latest_meta[view]
             _log.info('META: start updating & reloading cs at ' + str(datetime.now()))
             await asyncio.to_thread(self.cs.update, prodNumber, None, False, ad, ind, notes)
-            await asyncio.to_thread(self.cs.initialize)
             _log.info('META: end cs at ' + str(datetime.now()))
             del self.latest_meta[view]
             view.finish()
@@ -596,13 +596,14 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             ind = datetime.strptime(options.intended_date, options.dateFormat) if options.intended_date else None
             ad = datetime.strptime(options.airdate, options.dateFormat) if options.airdate else None
         except ValueError as e:
-            await ctx.send(f'`Malformed date: {e}`', ephemeral=True)
+            await ctx.send(f'`Malformed date: {e}`')
             return
 
         for time in ('daytime', 'primetime'):
             dfd = self.cs.get(time)
             try:
-                _, cur_ad, cur_id, cur_notes = dfd.select(pl.col('^(PROD|.*DATE|NOTES|SPECIAL)$')).row(
+                n_col = 'NOTES' if time == 'daytime' else 'SPECIAL'
+                _, cur_notes, cur_ad, cur_id = dfd.select('PROD', n_col, 'AIRDATE', 'INT. DATE').row(
                     by_predicate=pl.col('PROD') == options.prodNumber
                 )
 
@@ -613,20 +614,20 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     + excel_date_str(cur_ad)
                     + '\n\tINT. DATE: '
                     + excel_date_str(cur_id)
-                    + f'\n\tNOTES: {cur_notes}'
+                    + f'\n\t{n_col}: {cur_notes}'
                 )
                 break
-            except pl.exceptions.RowsException:
+            except pl.exceptions.RowsError:
                 pass
         else:
-            await ctx.send('`Production code must exist and be in daytime or primetime.`', ephemeral=True)
+            await ctx.send('`Production code must exist and be in daytime or primetime.`')
             return
 
         ind_str = excel_date_str(ind) if ind else 'Do not change'
         ad_str = excel_date_str(ad) if ad else 'Do not change'
         empty_notes = options.notes and options.notes.lower() == 'empty'
         notes_str = 'Do not change' if not options.notes else '' if empty_notes else options.notes
-        input_str = f'PROPOSED CHANGES:\n\tAIRDATE: {ad_str}\n\tINT. DATE: {ind_str}\n\tNOTES: {notes_str}'
+        input_str = f'PROPOSED CHANGES:\n\tAIRDATE: {ad_str}\n\tINT. DATE: {ind_str}\n\t{n_col}: {notes_str}'
 
         v = CSUpdateView(self, options.prodNumber, True, ctx.guild, self.bot.SCHEDULER, pgUpdate=False)
 
@@ -635,11 +636,14 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         # 	await mm.edit(view=None)
 
         m = await ctx.send(f'```{input_str}\n\n{current}```', view=v)
-        self.latest_meta[v] = (m, options.prodNumber, ad, ind, '' if empty_notes else options.notes)
+        self.latest_meta[v] = (m, options.prodNumber, ad, ind, None if empty_notes else options.notes)
 
     async def cs_cancel(self, view):
         async with self.latest_lock:
-            del (self.latest_conflict if view.pgUpdate else self.latest_meta)[view]
+            try:
+                del (self.latest_conflict if view.pgUpdate else self.latest_meta)[view]
+            except KeyError:
+                pass
 
     @played.command(aliases=['conflict', 'c'], with_app_command=False)
     async def concurrence(
@@ -656,15 +660,15 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     ):
         """Fetches concurrence info for the provided pricing games (at least 2, up to 6). (The number of times played together in the same lineup.)
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin.
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
 
-        PGs are all mapped to at least one single-word key. See the pastebin for a complete listing.
+        PGs are all mapped to at least one single-word key. See the FAQ for a complete listing.
 
         See !flagshelp for more on pgFlags.
 
         The output is the number of times, within the given dataset, all the PGs have shown together in one lineup.
 
-        If showLineups is True (see the pastebin for more info on how to specify True), also print out the complete lineup info for every matching entry. Can then further be sorted by production number or date ("sort" option), with the additional option to show the number of shows/days since the prior sorted entry ("since" option).
+        If showLineups is True (see the FAQ for more info on how to specify True), also print out the complete lineup info for every matching entry. Can then further be sorted by production number or date ("sort" option), with the additional option to show the number of shows/days since the prior sorted entry ("since" option).
 
         If bySeason is non-zero, partition the output by the given number of ep (provided the given time has ep).
 
@@ -672,18 +676,21 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         pgs = list(itertools.takewhile(operator.truth, ctx.args[2:8]))
         pgs_set = set(pgs)
-        assert len(pgs_set) == len(pgs)
+        assert len(pgs_set) == len(pgs), 'Duplicate PG found.'
 
         try:
             ep, epText, isDate = await parse_time_options(ctx, options, *pgs)
         except ValueError:
+            return  # error message sending taken care of in parse_time_options (could have factored in coding better)
+        except AssertionError as e:
+            await ctx.send(f'`Error parsing time options: {e.message}`')
             return
 
         bySeasonBool = (
             not isDate
             and options.bySeason > 0
             and not ep.empty
-            and options.bySeason < len(ep_list := list(P.iterate(ep, step=1)))
+            and options.bySeason < len(ep_list := list(SI.iterate(ep, step=1)))
         )
 
         async with ctx.typing():
@@ -718,7 +725,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
             if bySeasonBool and ttl:
                 season_chunks = [ep.replace(lower=sc[0], upper=sc[-1]) for sc in chunked(ep_list, options.bySeason)]
-                season_chunk_lists = [list(P.iterate(sc, step=1)) for sc in season_chunks]
+                season_chunk_lists = [list(SI.iterate(sc, step=1)) for sc in season_chunks]
                 sub_df_groups = [sub_df.filter(pl.col('S').is_in(scl)) for scl in season_chunk_lists]
                 freq_chunks = [sdg.height for sdg in sub_df_groups]
 
@@ -736,7 +743,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         sub_is = '{}, {}: {}'.format(pgs_str, season_portion_str(sc), fc)
                         if fc:
                             if options.bySeason == 1:
-                                sdg = sdg.select(pl.exclude('S'))
+                                sdg = sdg.drop('S')
                             total_str.append(gen_lineup_submes(sdg, sub_is, options.time))
                         else:
                             total_str.append(sub_is)
@@ -745,7 +752,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 initial_str = '{}, {}{}: {}'.format(pgs_str, epText, ', no ? flag' if options.excludeEducated else '', ttl)
                 if options.showLineup and ttl:
                     total_str = gen_lineup_submes(
-                        sub_df.select(pl.exclude('S')) if ep and options.start == options.end else sub_df,
+                        sub_df.drop('S') if ep and options.start == options.end else sub_df,
                         initial_str,
                         options.time,
                     )
@@ -763,25 +770,28 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         See !flagshelp for more on pgFlags. This flag must be a certain one (no ^ or ?) as the slots for such flags are by nature undefined.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin.
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
 
         If bySeason is non-zero, partition the output by the given number of seasons (provided the given time has seasons).
 
         If pgsOnly is true, PGGroups are instead treated as shorthand for multiple single PGs.
 
-        PGs and PGGroups are all mapped to at least one single-word key. See the pastebin for a complete listing.
+        PGs and PGGroups are all mapped to at least one single-word key. See the FAQ for a complete listing.
         """
 
         try:
             ep, epText, isDate = await parse_time_options(ctx, options)
         except ValueError:
+            return  # error message sending taken care of in parse_time_options (could have factored in coding better)
+        except AssertionError as e:
+            await ctx.send(f'`Error parsing time options: {e.message}`')
             return
 
         bySeasonBool = (
             not isDate
             and options.bySeason > 0
             and not ep.empty
-            and options.bySeason < len(ep_list := list(P.iterate(ep, step=1)))
+            and options.bySeason < len(ep_list := list(SI.iterate(ep, step=1)))
         )
 
         if pgQueries:
@@ -816,9 +826,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             else:
                 flags_str = ''
 
-            sub_slots_df = self.cs.endpoint_sub(
-                ep, options.time, q=self.cs.slot_table(options.time, 'S' if options.time != 'primetime' else None)
-            )
+            sub_slots_df = self.cs.endpoint_sub(ep, options.time, table='slots')
             if options.pgFlags:
                 sub_slots_df = sub_slots_df.filter(pl.col('flag').is_in(list(options.pgFlags)))
 
@@ -878,7 +886,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         epText = 'SYNDICATED ' + epText
 
                 if bySeasonBool:
-                    ep_list = list(P.iterate(pg_ep, step=1))
+                    ep_list = list(SI.iterate(pg_ep, step=1))
                     season_chunks = [pg_ep.replace(lower=sc[0], upper=sc[-1]) for sc in chunked(ep_list, options.bySeason)]
                     sc_strs = [season_portion_str(sc) for sc in season_chunks]
 
@@ -886,8 +894,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         sub_slots_df.filter(
                             pl.col('PG').is_in([str(pg) for pg in pgQ]) if isPGGroup else pl.col('PG') == str(pgQ)
                         )
-                        .select(pl.exclude('PG'))
-                        .groupby([(pl.col('S').rank('dense') - 1) // options.bySeason, 'flag'])
+                        .drop('PG')
+                        .group_by([(pl.col('S').rank('dense') - 1) // options.bySeason, 'flag'])
                         .agg(pl.exclude('S').sum())
                     )
                     if not options.pgFlags:
@@ -897,25 +905,25 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                                 [pl.col('S')]
                                 + [
                                     pl.when(pl.col('flag') == sc)
-                                    .then(pl.concat_list(pl.col('^PG\d$')).arr.sum())
+                                    .then(pl.concat_list(cs.matches('^PG\d$')).list.sum())
                                     .otherwise(pl.lit(0))
                                     .alias(f'PG{f}')
                                     for sc, f in zip(sc_t, '^?')
                                 ]
                             )
-                            .groupby('S')
-                            .agg(pl.all().sum())
+                            .group_by('S')
+                            .sum()
                         )
                         h = (
                             h.filter(~has_any_flags('flag', frozenset(sc_t)))
                             .join(h_unc, on='S')
-                            .groupby('S')
+                            .group_by('S')
                             .agg(pl.exclude('flag').sum())
                             .sort('S')
                             .with_columns(
                                 [
                                     pl.Series('S', sc_strs),
-                                    pl.concat_list(pl.exclude('S')).arr.sum().alias('ALL'),
+                                    pl.concat_list(pl.exclude('S')).list.sum().alias('ALL'),
                                 ]
                             )
                         )
@@ -924,7 +932,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         .rename({'S': ''})
                         .collect()
                     )
-                    h = h.select([pl.col(s.name) for s in h if s.name not in ('PG^', 'PG?') or s.sum()])
+                    h = h.select(pl.col(*[s.name for s in h if s.name not in ('PG^', 'PG?') or s.sum()]))
 
                     # add some line spacing between total row/column
                     ss = ppp(h)
@@ -945,21 +953,21 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         sub_slots_df.filter(
                             pl.col('PG').is_in([str(pg) for pg in pgQ]) if isPGGroup else pl.col('PG') == str(pgQ)
                         )
-                        .select(pl.exclude('PG'))
-                        .groupby('flag')
-                        .agg(pl.col('^PG\d$').sum())
-                        # .with_columns(pl.concat_list(pl.exclude('flag')).arr.sum().alias('ALL'))
+                        .drop('PG')
+                        .group_by('flag')
+                        .agg(cs.matches('^PG\d$').sum())
+                        # .with_columns(pl.concat_list(pl.exclude('flag')).list.sum().alias('ALL'))
                         .collect()
                     )
 
                     ssd_pg_certain = h.filter(pl.col('flag') < SlotCertainty.SLOT).sum().fill_null(0).row(0)[1:]
                     try:
                         ssd_pg_slot = sum(h.row(by_predicate=pl.col('flag') == SlotCertainty.SLOT)[1:])
-                    except pl.exceptions.RowsException:
+                    except pl.exceptions.RowsError:
                         ssd_pg_slot = 0
                     try:
                         ssd_pg_game = sum(h.row(by_predicate=pl.col('flag') == SlotCertainty.GAME)[1:])
-                    except pl.exceptions.RowsException:
+                    except pl.exceptions.RowsError:
                         ssd_pg_game = 0
 
                     ssd_sum = sum(ssd_pg_certain) + ssd_pg_slot + ssd_pg_game
@@ -1028,21 +1036,18 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         A pgQuery in this context is a valid single PG, or a PGGroup. PGGroups are treated as shorthand for multiple single PGs.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin."""
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ."""
 
         try:
             ep, epText, _ = await parse_time_options(ctx, options)
         except ValueError:
+            return  # error message sending taken care of in parse_time_options (could have factored in coding better)
+        except AssertionError as e:
+            await ctx.send(f'`Error parsing time options: {e.message}`')
             return
 
         # not sure why copy is needed? reset_index?
-        sub_slots_df = self.cs.endpoint_sub(
-            ep,
-            options.time,
-            q=self.cs.slot_table(
-                options.time, 'S' if options.time != 'primetime' else None
-            ),  # 'S' if options.time != 'primetime' else
-        )
+        sub_slots_df = self.cs.endpoint_sub(ep, options.time, table='slots')
 
         pgQueries = list(value_chain(*pgGroups)) or list(PG)
 
@@ -1055,21 +1060,16 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         if options.excludeUncertain:
             filt_exprs.append(~has_any_flags('flag', frozenset({2**qu for qu in QU_FLAGS})))
         if filt_exprs:
-            sub_slots_df = sub_slots_df.filter(pl.all(filt_exprs))
+            sub_slots_df = sub_slots_df.filter(pl.all_horizontal(filt_exprs))
 
-        ddf = sub_slots_df.collect()
+        ddf = sub_slots_df.group_by('PG').agg(pl.exclude('flag', 'S').sum()).select(cs.matches(f'^PG\d?$')).collect()
 
         if ddf.height:
             q = ddf.lazy()
             result = []
 
             for slot in slots:
-                ser = (
-                    q.groupby('PG')
-                    .agg(pl.exclude('flag').sum())
-                    .select(pl.col(f'^PG{slot}?$').sort_by(f'PG{slot}', True).head(options.N))
-                    .collect()
-                )
+                ser = ddf.select('PG', f'PG{slot}').sort(f'PG{slot}', descending=True).head(options.N)
                 result.append(
                     slot
                     + ORDINAL_SUFFIXES[int(slot)]
@@ -1079,11 +1079,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 )
             if len(slots) > 1:
                 ser = (
-                    q.groupby('PG')
-                    .agg(pl.exclude('flag').sum())
-                    .select([pl.col('PG'), pl.fold(pl.lit(0), operator.add, pl.col(f'^PG[{slots}]$')).alias('sum')])
-                    .select(pl.all().sort_by('sum', True).head(options.N))
-                    .collect()
+                    ddf.select('PG', sum=pl.sum_horizontal(cs.matches(f'PG[{slots}]')))
+                    .sort('sum', descending=True)
+                    .head(options.N)
                 )
                 result.append('\nALL:\n' + ('\n'.join(f'\t{pg} ({freq})' for pg, freq in ser.rows())))
 
@@ -1114,11 +1112,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         See !flagshelp for more on pgFlags.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin.
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
 
         For daytime, playings with the educated guess flag (?) can be optionally excluded.
 
-        PGs are all mapped to at least one single-word key. See the pastebin for a complete listing."""
+        PGs are all mapped to at least one single-word key. See the FAQ for a complete listing."""
 
         pgs = list(itertools.takewhile(operator.truth, ctx.args[2:7]))
         assert len(set(pgs)) == len(pgs)
@@ -1126,15 +1124,18 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         N1 = options.N1
         N2 = options.N2
         if type(N2) == str:
-            N2 = P.inf
+            N2 = SI.inf
 
         if N1 < 0 or (N2 and N1 > N2):
-            await ctx.send('`Invalid N parameters. N1 must be >= 0, N2 must be >= N1 if provided.`', ephemeral=True)
+            await ctx.send('`Invalid N parameters. N1 must be >= 0, N2 must be >= N1 if provided.`')
             return
 
         try:
             ep, epText, _ = await parse_time_options(ctx, options, *pgs)
         except ValueError:
+            return  # error message sending taken care of in parse_time_options (could have factored in coding better)
+        except AssertionError as e:
+            await ctx.send(f'`Error parsing time options: {e.message}`')
             return
 
         async with ctx.typing():
@@ -1168,11 +1169,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             try:
                 check = sub_df.row(by_predicate=pl.col('PROD') == '6435K')
                 all_dinko = True
-            except pl.exceptions.RowsException:
+            except pl.exceptions.RowsError:
                 all_dinko = False
 
             sub_df = (
-                sub_df.select(pl.concat_list('^PG\d_p$').alias('PG').arr.explode().value_counts(True, True))
+                sub_df.select(
+                    pl.concat_list('^PG\d_p$').alias('PG').list.explode().drop_nulls().value_counts(sort=True, parallel=True)
+                )
                 .unnest('PG')
                 .filter(~pl.col('PG').is_in([str(pg) for pg in pgs]))
             )
@@ -1251,7 +1254,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
             if N2:
                 sdf = sub_df.filter(pl.col('counts').is_between(N1, N2, closed='both'))
-                r_text = [f'{N}: ' + ', '.join(sorted(sdfg.to_series())) for N, sdfg in sdf.groupby('counts')]
+                r_text = [f'{N}: ' + ', '.join(sorted(sdfg.to_series())) for N, sdfg in sdf.group_by('counts')]
 
                 if not N1 and (zero_str := ', '.join([str(pg2) for pg2 in sorted(result0, key=NAME_ATTRGET)])):
                     r_text.append(f'0: {zero_str}')
@@ -1290,7 +1293,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     async def lineupProd(self, ctx, *, production_numbers):
         """Lists every lineup given in a space-separated input of any desired length.
 
-        For valid production code patterns, see the pastebin.
+        For valid production code patterns, see the FAQ.
         """
         sent_any = False
         prods = re.split(r'\s+', production_numbers.upper())
@@ -1302,7 +1305,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 sent_any = True
 
         if not sent_any:
-            await ctx.send('`No existing production codes given.`', ephemeral=True)
+            await ctx.send('`No existing production codes given.`')
 
     @lineup.command(name='date', aliases=['d'], with_app_command=False)
     async def lineupDate(
@@ -1315,7 +1318,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         try:
             dts = [(datetime.strptime(d, dateFormat) - datetime(1970, 1, 1)).days for d in dates]
         except ValueError as e:
-            await ctx.send(f'`Malformed date: {e}`', ephemeral=True)
+            await ctx.send(f'`Malformed date: {e}`')
             return
 
         df = self.cs.get(time)
@@ -1329,20 +1332,20 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     async def lineupProdRange(self, ctx, start: str.upper, end: str.upper, time: Optional[TimeConverter] = 'daytime'):
         """Lists every lineup in a range of production numbers from start to end, inclusive, in the given time.
 
-        For valid production code patterns, see the pastebin.
+        For valid production code patterns, see the FAQ.
         """
         sub_df = self.cs.get(time)
         n_idx = sub_df.columns.index('PG_n')
 
         try:
             start_idx = sub_df.row(by_predicate=pl.col('PROD') == start)[n_idx]
-        except pl.exceptions.RowsException as e:
-            await ctx.send(f'`Invalid production code for {time}: {start}`', ephemeral=True)
+        except pl.exceptions.RowsError as e:
+            await ctx.send(f'`Invalid production code for {time}: {start}`')
             return
         try:
             end_idx = sub_df.row(by_predicate=pl.col('PROD') == end)[n_idx]
-        except pl.exceptions.RowsException as e:
-            await ctx.send(f'`Invalid production code for {time}: {end}`', ephemeral=True)
+        except pl.exceptions.RowsError as e:
+            await ctx.send(f'`Invalid production code for {time}: {end}`')
             return
 
         if start_idx < end_idx:
@@ -1375,10 +1378,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             startDate = datetime.strptime(start, dateFormat).date()
             endDate = date.today() if re.fullmatch('today', end, re.I) else datetime.strptime(end, dateFormat).date()
         except ValueError as e:
-            await ctx.send(f'`Malformed input: {e}`', ephemeral=True)
+            await ctx.send(f'`Malformed input: {e}`')
             return
 
-        dts = pl.date_range(startDate, endDate, step)
+        dts = pl.date_range(startDate, endDate, step, eager=True)
 
         df = self.cs.get(time)
         sub_df = await trim_query(df.lazy().filter(pl.col('AIRDATE').is_in(dts)))
@@ -1391,11 +1394,14 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     async def lineupRandom(self, ctx, N: Optional[NONNEGATIVE_INT] = 1, *, options: LineupRFlags):
         """Randomly picks and prints out N lineups from the dataset. If sort is False, random print order as well.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin."""
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ."""
 
         try:
             ep, epText, isDate = await parse_time_options(ctx, options)
         except ValueError:
+            return  # error message sending taken care of in parse_time_options (could have factored in coding better)
+        except AssertionError as e:
+            await ctx.send(f'`Error parsing time options: {e.message}`')
             return
 
         df = self.cs.endpoint_sub(ep, options.time).collect()
@@ -1411,25 +1417,23 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             sub_df = await trim_query(df.sample(n=N, with_replacement=False, shuffle=not options.sort).lazy())
             await send_long_mes(ctx, gen_lineup_submes(sub_df, '', options.time))
         else:
-            await ctx.send(
-                f'`No point to picking{extra_str} {N} shows out of a sample size of {df.height}.`', ephemeral=True
-            )
+            await ctx.send(f'`No point to picking{extra_str} {N} shows out of a sample size of {df.height}.`')
 
     @lineup.command(aliases=['s'], with_app_command=False)
     async def search(self, ctx, *, options: SearchFlags):
-        """Lists every lineup that matches a set of conditions. If 'all' is given to logicExpr (short for logical expression), all the conditions must match. If 'any' is given, at least one condition must match. Custom logic expressions are also allowed, see the pastebin for more details.
+        """Lists every lineup that matches a set of conditions. If 'all' is given to logicExpr (short for logical expression), all the conditions must match. If 'any' is given, at least one condition must match. Custom logic expressions are also allowed, see the FAQ for more details.
 
-        Each condition is one to four "words", separated by commas or semicolons. See the pastebin for exact formatting details.
+        Each condition is one to four "words", separated by commas or semicolons. See the FAQ for exact formatting details.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the pastebin.
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
 
-        PGs and PGGroups are all mapped to at least one single-word key. See the pastebin for a complete listing.
+        PGs and PGGroups are all mapped to at least one single-word key. See the FAQ for a complete listing.
 
         If excludeUncertain is True, it's a shorthand for specifying every flag except ^ and ? in every condition as the default.
 
         The resulting lineups can be sorted by production number or date ("sort" option), with the additional option to show the number of shows/days since the prior sorted entry ("since" option).
 
-        A regular expression can be used for the "notes" parameter to search that column of the data. It will be case insensitive. See pastebin for more on this.
+        A regular expression can be used for the "notes" parameter to search that column of the data. It will be case insensitive. See FAQ for more on this.
         """
 
         overallCond = []
@@ -1452,7 +1456,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         raise ValueError('SPECIAL only exists in primetime. (NOTES is daytime.)')
                     regex = words[1]
 
-                    f = pl.col(col).cast(str).str.contains(f'(?i){regex}')
+                    f = pl.col(col)
+                    if col != 'PROD':
+                        f = f.cast(str)
+                    f = f.str.contains(f'(?i){regex}')
                     cd = f'{col} matches "{regex}" (case-insensitive)'
                 case ['SEASON' | 'S' as col, *e]:
                     if options.time == 'primetime':
@@ -1465,9 +1472,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     *e,
                 ]:
                     col = _col_name_remapping.get(col, col)
+                    if options.time == 'syndicated' or (options.time == 'unaired' and col == 'AIRDATE'):
+                        raise ValueError(f'{col} condition is invalid for {options.time}.')
                     f, cd = build_dt_q_expression(col, dt_q, e)
                 case ['DATE' | 'D' | 'AIR' | 'ID' | 'INTENDED' | 'AIRDATE' as col, *e]:
                     col = _col_name_remapping.get(col, col)
+                    if options.time == 'syndicated' or (options.time == 'unaired' and col == 'AIRDATE'):
+                        raise ValueError(f'{col} condition is invalid for {options.time}.')
                     e = transform_str_to_dts(e, options.dateFormat)
                     f, cd = build_date_expression(pl.col(col), e, options.dateFormat)
                     cd = f'{col} is {cd}'
@@ -1604,9 +1615,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         async with ctx.typing():
             if options.logicExpr == 'all':
-                total_expr = pl.all(overallCond)
+                total_expr = pl.all_horizontal(overallCond)
             elif options.logicExpr == 'any':
-                total_expr = pl.any(overallCond)
+                total_expr = pl.any_horizontal(overallCond)
             else:
                 l = locals()
                 l |= {letter: fe for fe, letter in zip(overallCond, string.ascii_uppercase)}
@@ -1618,7 +1629,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
             all_full_hour = not (
                 options.time == 'syndicated'
-                or (sub_df.select(pl.any(pl.col('PG6').is_null()))[0, 0] if sub_df.height else True)
+                or (sub_df.select(pl.col('PG6').is_null().any()).item() if sub_df.height else True)
             )
 
             final_cond_str = (
@@ -1676,7 +1687,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     unfound_pgs |= {
                         PG.lookup(p)
                         for p in self.cs.get('daytime')
-                        .select(pl.col('^(PROD|PG\d_p)$'))
+                        .select(pl.col('PROD') | cs.matches('^PG\d_p$'))
                         .row(by_predicate=pl.col('PROD') == q)[1:]
                         if p
                     }
@@ -1686,8 +1697,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     unfound_pgs |= q
 
             if options.asOf:
-                cutoff = self.cs.get('daytime').select(pl.col('PROD')).row(by_predicate=pl.col('PROD') == options.asOf)[0]
-        except pl.exceptions.RowsException:
+                cutoff = self.cs.get('daytime').select('PROD', 'PG_n').row(by_predicate=pl.col('PROD') == options.asOf)[1]
+        except pl.exceptions.RowsError:
             await ctx.send(
                 '(One of) the daytime codes given to `pgs` or `asOf`, despite being properly formatted, does not exist. Some codes do get skipped.',
                 ephemeral=True,
@@ -1697,10 +1708,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         if options.activeOnly:
             unfound_pgs &= PG.partition_table['ACTIVE']
         if not unfound_pgs:
-            await ctx.send('`No PGs given. (If doing retired games only, set activeOnly to False.)`', ephemeral=True)
+            await ctx.send('`No PGs given. (If doing retired games only, set activeOnly to False.)`')
             return
 
-        seasons = P.closed(1, CURRENT_SEASON) & reduce(operator.or_, [pg.activeSeasons for pg in unfound_pgs])
+        seasons = SI.closed(1, CURRENT_SEASON) & reduce(operator.or_, [pg.activeSeasons for pg in unfound_pgs])
 
         if options.pgFlag:
             extra_str = (
@@ -1724,7 +1735,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 if options.asOf:
                     e.append(pl.col('PG_n') <= cutoff)
 
-                qq = q.filter(pl.all(e)).select(pl.col('^(PROD|AIRDATE)$'))
+                qq = q.filter(pl.all_horizontal(e)).select('PROD', 'AIRDATE')
                 if options.sortBy == 'date':
                     qq = qq.sort('AIRDATE')
                 qq = qq.tail(nth).collect()
@@ -1771,7 +1782,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         [
                             PG.lookup(p)
                             for p in self.cs.get('daytime')
-                            .select(pl.col('^(PROD|PG\d_p)$'))
+                            .select(pl.col('PROD') | cs.matches('^PG\d_p$'))
                             .row(by_predicate=pl.col('PROD') == q)[1:]
                             if p
                         ]
@@ -1780,7 +1791,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     qs.append(q)
                 else:
                     qs.extend(q)
-        except pl.exceptions.RowsException:
+        except pl.exceptions.RowsError:
             await ctx.send(
                 '(One of) the daytime codes given to `pgs` or `asOf`, despite being properly formatted, does not exist. Some codes do get skipped.',
                 ephemeral=True,
@@ -1800,13 +1811,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         else:
             pgs = [str(pg) for pg in pgs]
             async with ctx.typing():
-                sub_slots_df = self.cs.endpoint_sub(
-                    P.closed(CURRENT_SEASON - 1, CURRENT_SEASON), 'daytime', q=self.cs.slot_table('daytime', 'S')
-                )
+                sub_slots_df = self.cs.endpoint_sub(SI.closed(CURRENT_SEASON - 1, CURRENT_SEASON), 'daytime', table='slots')
                 prior_count, current_count = (
                     self.cs.get('daytime')
                     .filter(pl.col('S') >= CURRENT_SEASON - 1)
-                    .select(pl.col('S').value_counts(sort=True))
+                    .select(pl.col('S').value_counts(sort=True, parallel=True))
                     .unnest('S')
                     .to_series(1)
                 )
@@ -1814,9 +1823,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 res = []
                 current = (
                     sub_slots_df.filter((pl.col('S') == CURRENT_SEASON) & (pl.col('PG').is_in(pgs)))
-                    .select(pl.exclude(['flag', 'S']))
-                    .groupby('PG')
-                    .agg(pl.all().sum())
+                    .drop('flag', 'S')
+                    .group_by('PG')
+                    .sum()
                     .select(
                         [
                             pl.col('PG'),
@@ -1829,9 +1838,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 )
                 prior = (
                     sub_slots_df.filter((pl.col('S') == CURRENT_SEASON - 1) & (pl.col('PG').is_in(pgs)))
-                    .select(pl.exclude(['flag', 'S']))
-                    .groupby('PG')
-                    .agg(pl.all().sum())
+                    .drop('flag', 'S')
+                    .group_by('PG')
+                    .sum()
                     .select(
                         [
                             pl.col('PG'),
@@ -1852,9 +1861,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     pl.when(pl.col('DIF') >= 0).then(('+' + pl.col('DIF').cast(str)).alias('DIF')).otherwise(pl.col('DIF'))
                 )
 
-                await send_long_mes(
-                    ctx, result_df.collect().to_pandas().set_index('PG').to_string(index_names=False), newline_limit=14
-                )
+                await send_long_mes(ctx, ppp(result_df.collect().rename({'PG': ''})), newline_limit=14)
 
     @lineup.command(aliases=['g'])
     async def generate(self, ctx, *, options: GenerateFlags):
@@ -1886,7 +1893,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     @lineup.command(aliases=['a', 'notes', 'n'])
     async def addendum(self, ctx):
         """Prints a static message with some extra explanation on a few oddities in the lineup database."""
-        await ctx.send('>>> ' + self.cs.notes)
+        await ctx.send(self.cs.notes)
 
     @lineup.command(aliases=['flags', 'f'])
     async def flag(self, ctx, flags: Optional[str]):
@@ -1905,56 +1912,58 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         else:
             await ctx.send('>>> ' + '\n'.join(f'`{k}` {v}' for k, v in FLAG_INFO.items()))
 
+    @lineup.command()
+    async def excel(self, ctx):
+        """Returns a neatly printed Excel file containing wayo.py's whole lineup database."""
+        with self.cs.write_excel() as b:
+            b.seek(0)
+            await ctx.send(file=discord.File(b, filename='lineups.xlsx'))
+
     @lineup.command(hidden=True)
     @commands.is_owner()
     async def reload(self, ctx):
         await ctx.message.add_reaction('🚧')
         _log.info('start loading cs at ' + str(datetime.now()))
-        await asyncio.to_thread(self.cs.load_excel)
-        await asyncio.to_thread(self.cs.initialize)
+        async with self.latest_lock:
+            await asyncio.to_thread(self.cs.initialize)
         _log.info('end loading cs at ' + str(datetime.now()))
         await ctx.message.remove_reaction('🚧', ctx.bot.user)
         await ctx.message.add_reaction('✅')
 
     async def cog_command_error(self, ctx, e):
-        if isinstance(e, commands.CheckFailure):
-            await ctx.send('`Lineups are being reloaded right now, try again in a few seconds.`', ephemeral=True)
-        else:
-            if ctx.command.name == 'search':
-                if isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
-                    await ctx.send(
-                        '`At least one condition required. Use "condition=" or "cond=" (new syntax).`', ephemeral=True
-                    )
-                elif isinstance(e, commands.ConversionError):
-                    if isinstance(e.original, AssertionError):
-                        await ctx.send('`Logic expression does not evaluate to True or False.`', ephemeral=True)
-                    elif isinstance(e.original, TypeError):
-                        await ctx.send('`Malformed logic expression.`', ephemeral=True)
-                elif isinstance(e, commands.CommandInvokeError):
-                    await ctx.send(f'`{e.original}`', ephemeral=True)
-                else:
-                    await ctx.send(f'`{e}`', ephemeral=True)
-            elif ctx.command.name == 'edit':
-                if hasattr(e, 'original') and isinstance(e.original, AssertionError):
-                    await ctx.send('`At least one of intended date, airdate, notes must be specified.`', ephemeral=True)
-                elif isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
-                    await ctx.send('`prodNumber required.`', ephemeral=True)
-                else:
-                    await ctx.send(f'`{e}`', ephemeral=True)
+        if ctx.command.name == 'search':
+            if isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
+                await ctx.send('`At least one condition required. Use "condition=" or "cond=" (new syntax).`')
+            elif isinstance(e, commands.ConversionError):
+                if isinstance(e.original, AssertionError):
+                    await ctx.send('`Logic expression does not evaluate to True or False.`')
+                elif isinstance(e.original, TypeError):
+                    await ctx.send('`Malformed logic expression.`')
+            elif isinstance(e, commands.CommandInvokeError):
+                await ctx.send(f'`{e.original}`')
             else:
-                if isinstance(e, commands.ConversionError):
-                    if isinstance(e.original, KeyError):
-                        await ctx.send(f'`The following is not a PG (or PGGroup): {e.original}`', ephemeral=True)
-                    elif isinstance(e.original, ValueError):
-                        await ctx.send(f'`The following value is not properly formatted: {e.original}`', ephemeral=True)
-                    else:
-                        await ctx.send(f'`{e.__cause__}`', ephemeral=True)
-                elif isinstance(e, commands.BadArgument):
-                    await ctx.send(f'`{e.__cause__}`', ephemeral=True)
-                elif isinstance(e, commands.CommandError):  # and isinstance(e.original, AssertionError):
-                    await ctx.send(f'`{e}`', ephemeral=True)
+                await ctx.send(f'`{e}`')
+        elif ctx.command.name == 'edit':
+            if hasattr(e, 'original') and isinstance(e.original, AssertionError):
+                await ctx.send('`At least one of intended date, airdate, notes must be specified.`')
+            elif isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
+                await ctx.send('`prodNumber required.`')
+            else:
+                await ctx.send(f'`{e}`')
+        else:
+            if isinstance(e, commands.ConversionError):
+                if isinstance(e.original, KeyError):
+                    await ctx.send(f'`The following is not a PG (or PGGroup): {e.original}`')
+                elif isinstance(e.original, ValueError):
+                    await ctx.send(f'`The following value is not properly formatted: {e.original}`')
                 else:
-                    pass  # wayo.py
+                    await ctx.send(f'`{e.__cause__}`')
+            elif isinstance(e, commands.BadArgument):
+                await ctx.send(f'`{e.__cause__}`')
+            elif isinstance(e, commands.CommandError):  # and isinstance(e.original, AssertionError):
+                await ctx.send(f'`{e}`')
+            else:
+                pass  # wayo.py
 
 
 async def setup(bot):

@@ -5,24 +5,25 @@ from datetime import datetime
 from functools import cached_property, reduce
 from typing import *
 
-import portion as P
+from bidict import bidict
 from cachetools.func import lfu_cache
 from requests.structures import CaseInsensitiveDict
+from util2 import SI
 
 Range = NewType('Range', range)
-Portion = NewType('Portion', P.Interval)
+SeasonInterval = NewType('SeasonInterval', SI)
 
-CURRENT_SEASON = 51
+CURRENT_SEASON = 52
 
 
 @enum.unique
 class PG(enum.Enum):
     Accelerator = ('Accelerator', ((44,), (48,)), 'Acc')
     AddEmUp = ("Add 'em Up", ((15, 17),), 'Add', 'Addy', 'AEU')
-    AnyNumber = ('Any Number', ((1, P.inf),), 'A#', 'Any' 'Any#')
+    AnyNumber = ('Any Number', ((1, SI.inf),), 'A#', 'Any' 'Any#')
     BackToXX = (
         "Back to '7X",
-        ((50, P.inf),),
+        ((50, SI.inf),),
         'Back',
         'Backy',
         'BT7X',
@@ -32,84 +33,84 @@ class PG(enum.Enum):
         ),
     )
     BalanceGame84 = ("Balance Game '84", ((12, 14),), 'Balance84')
-    BalanceGame = ('Balance Game', ((34, P.inf),), 'Balance', 'Bal')
-    BargainGame = ('Bargain Game', ((8, 37), (40, P.inf)), 'Bargain', "Barker's Bargain Bar", 'Barg', 'Bar', 'BBB')
-    Bonkers = ('Bonkers', ((30, P.inf),), 'Bonk', 'Bkrs')
-    BonusGame = ('Bonus Game', ((1, P.inf),), 'Bonus', 'Bnus')
+    BalanceGame = ('Balance Game', ((34, SI.inf),), 'Balance', 'Bal')
+    BargainGame = ('Bargain Game', ((8, 37), (40, SI.inf)), 'Bargain', "Barker's Bargain Bar", 'Barg', 'Bar', 'BBB')
+    Bonkers = ('Bonkers', ((30, SI.inf),), 'Bonk', 'Bkrs')
+    BonusGame = ('Bonus Game', ((1, SI.inf),), 'Bonus', 'Bnus')
     BullseyeI = ('Bullseye I', ((1,),), 'BullseyeI', 'Bullseye72', 'Bull72', 'BullI', 'BullyI', 'BullsyI')
-    Bullseye = ('Bullseye', ((4, P.inf),), 'Bullseye', 'Bull', 'Bully', 'Bullsy')
+    Bullseye = ('Bullseye', ((4, SI.inf),), 'Bullseye', 'Bull', 'Bully', 'Bullsy')
     Bump = ('Bump', ((14, 20),), 'Bumpy')
     BuyOrSell = ('Buy Or Sell', ((20, 36),), 'BoS', 'Buy', 'Sell')
-    CardGame = ('Card Game', ((2, 40), (42, P.inf)), 'New Card Game', 'Card', 'Cardy')
+    CardGame = ('Card Game', ((2, 40), (42, SI.inf)), 'New Card Game', 'Card', 'Cardy')
     CarPong = ('Car Pong', ((44,), (48,)), 'Pong', 'Pongy')
-    CheckGame = ('Check Game', ((10, 37), (41, P.inf)), 'Blank Check', 'Check', 'Checky', 'Chec')
-    CheckOut = ('Check-Out', ((10, P.inf),), 'C-O', 'CO', 'Checkout', 'Out')
+    CheckGame = ('Check Game', ((10, 37), (41, SI.inf)), 'Blank Check', 'Check', 'Checky', 'Chec')
+    CheckOut = ('Check-Out', ((10, SI.inf),), 'C-O', 'CO', 'Checkout', 'Out')
     ClearanceSale = ('Clearance Sale', ((27, 37),), 'Clearance', 'Sale', 'Saley')
-    Cliffhangers = ('Cliff Hangers', ((4, P.inf),), 'Cliffhangers', 'Cliff', 'Cliffy', 'Clif')
-    ClockGame = ('Clock Game', ((1, P.inf),), 'Clock', 'Clocky', 'Cloc')
-    ComingOrGoing = ('Coming or Going', ((32, P.inf),), 'CoG', 'Coggy')
-    CoverUp = ('Cover Up', ((22, P.inf),), 'Cover', 'COVR', 'CU')
+    Cliffhangers = ('Cliff Hangers', ((4, SI.inf),), 'Cliffhangers', 'Cliff', 'Cliffy', 'Clif')
+    ClockGame = ('Clock Game', ((1, SI.inf),), 'Clock', 'Clocky', 'Cloc')
+    ComingOrGoing = ('Coming or Going', ((32, SI.inf),), 'CoG', 'Coggy')
+    CoverUp = ('Cover Up', ((22, SI.inf),), 'Cover', 'COVR', 'CU')
     CreditCard = ('Credit Card', ((16, 37),), 'Credit')
-    DangerPrice = ('Danger Price', ((4, P.inf),), 'Danger', 'Dngr')
-    DiceGame = ('Dice Game', ((4, P.inf),), 'Deluxe Dice Game', 'Dice', 'Dicey', 'Deluxe')
-    DoTheMath = ('Do the Math', ((42, P.inf),), 'Math', 'DTM')
+    DangerPrice = ('Danger Price', ((4, SI.inf),), 'Danger', 'Dngr')
+    DiceGame = ('Dice Game', ((4, SI.inf),), 'Deluxe Dice Game', 'Dice', 'Dicey', 'Deluxe')
+    DoTheMath = ('Do the Math', ((42, SI.inf),), 'Math', 'DTM')
     DoubleBullseye = ('Double Bullseye', ((1,),), 'DB', 'DBullseye', 'DBull', 'DBully', 'DBullsy')
-    DoubleCross = ('Double Cross', ((40, P.inf),), 'Cross', 'Cros', 'DX')
+    DoubleCross = ('Double Cross', ((40, SI.inf),), 'Cross', 'Cros', 'DX')
     DoubleDigits = ('Double Digits', ((1,),), 'DD', 'Digits')
-    DoublePrices = ('Double Prices', ((1, P.inf),), 'DP', 'Double')
-    EazyAz123 = ('Eazy az 1 2 3', ((24, P.inf),), 'Eazy az 123', 'Eazy', 'Easy', '123')
+    DoublePrices = ('Double Prices', ((1, SI.inf),), 'DP', 'Double')
+    EazyAz123 = ('Eazy az 1 2 3', ((24, SI.inf),), 'Eazy az 123', 'Eazy', 'Easy', '123')
     FinishLine = ('Finish Line', ((6, 7),), 'Finish')
-    FivePriceTags = ('5 Price Tags', ((1, P.inf),), 'Five Price Tags', '5PT', 'FPT', 'Tags')
-    FlipFlop = ('Flip Flop', ((28, P.inf),), 'Flip', 'Flippy')
+    FivePriceTags = ('5 Price Tags', ((1, SI.inf),), 'Five Price Tags', '5PT', 'FPT', 'Tags')
+    FlipFlop = ('Flip Flop', ((28, SI.inf),), 'Flip', 'Flippy')
     FortuneHunter = ('Fortune Hunter', ((26, 28),), 'Fortune', 'Hunter')
-    FreezeFrame = ('Freeze Frame', ((23, P.inf),), 'Freeze', 'Freezy', 'Frze')
+    FreezeFrame = ('Freeze Frame', ((23, SI.inf),), 'Freeze', 'Freezy', 'Frze')
     GalleryGame = ('Gallery Game', ((19,),), 'Gallery')
-    GasMoney = ('Gas Money', ((37, P.inf),), 'Gas', 'Gassy')
+    GasMoney = ('Gas Money', ((37, SI.inf),), 'Gas', 'Gassy')
     GiveOrKeep = ('Give or Keep', ((1, 19),), 'GoK', 'Give', 'Keep')
     GoForASpin = ('Go For A Spin', ((44,), (48,)), 'Spin', 'Spinny')
     GoldRush = ('Gold Rush', ((44, 45), (48,)), 'Rush', 'Rushy')
-    GoldenRoad = ('Golden Road', ((3, P.inf),), 'Gold', 'Road', 'Goldy', 'Roady', 'Golden', 'GR')
-    GrandGame = ('Grand Game', ((8, P.inf),), 'Grand', 'Grandy', 'Grnd')
-    Gridlock = ('Gridlock!', ((46, P.inf),), 'Gridlock', 'Grid', 'Griddy')
-    GroceryGame = ('Grocery Game', ((1, P.inf),), 'Grocery', 'Groc')
-    HalfOff = ('1/2 Off', ((32, P.inf),), 'Half', 'Halfy')
-    HiLo = ('Hi Lo', ((1, P.inf),), 'H-L', 'Hi-Lo', 'HL', 'HiLo')
+    GoldenRoad = ('Golden Road', ((3, SI.inf),), 'Gold', 'Road', 'Goldy', 'Roady', 'Golden', 'GR')
+    GrandGame = ('Grand Game', ((8, SI.inf),), 'Grand', 'Grandy', 'Grnd')
+    Gridlock = ('Gridlock!', ((46, SI.inf),), 'Gridlock', 'Grid', 'Griddy')
+    GroceryGame = ('Grocery Game', ((1, SI.inf),), 'Grocery', 'Groc')
+    HalfOff = ('1/2 Off', ((32, SI.inf),), 'Half', 'Halfy')
+    HiLo = ('Hi Lo', ((1, SI.inf),), 'H-L', 'Hi-Lo', 'HL', 'HiLo')
     HitMe = ('Hit Me', ((9, 35),), 'Hit', 'Hitty')
-    HoleInOne = ('Hole in One', ((5, P.inf),), 'Hole in One or Two', 'Hole')
-    HotSeat = ('Hot Seat', ((45, P.inf),), 'Seat', 'Hot', 'Seaty')
+    HoleInOne = ('Hole in One', ((5, SI.inf),), 'Hole in One or Two', 'Hole')
+    HotSeat = ('Hot Seat', ((45, SI.inf),), 'Seat', 'Hot', 'Seaty')
     Hurdles = ('Hurdles', ((4, 11),), 'Hurd')
-    ItsInTheBag = ("It's in the Bag", ((26, P.inf),), 'Bag', 'Baggy')
+    ItsInTheBag = ("It's in the Bag", ((26, SI.inf),), 'Bag', 'Baggy')
     ItsOptional = ("It's Optional", ((7, 11),), 'Option', 'Optional')
     Joker = ('Joker', ((22, 35),), 'Joke')
-    LetEmRoll = ("Let 'em Roll", ((28, P.inf),), 'Let em Roll', 'Roll', 'Rolly')
-    LineEmUp = ('Line em Up', ((26, P.inf),), 'Line', 'LEU')
-    LuckySeven = ('Lucky $even', ((1, P.inf),), 'Lucky Seven', 'L7', 'Lucky', 'Seven', '$even', '7')
-    MagicNumber = ('Magic #', ((21, P.inf),), 'M#', 'Magic')
+    LetEmRoll = ("Let 'em Roll", ((28, SI.inf),), 'Let em Roll', 'Roll', 'Rolly')
+    LineEmUp = ('Line em Up', ((26, SI.inf),), 'Line', 'LEU')
+    LuckySeven = ('Lucky $even', ((1, SI.inf),), 'Lucky Seven', 'L7', 'Lucky', 'Seven', '$even', '7')
+    MagicNumber = ('Magic #', ((21, 50),), 'M#', 'Magic')
     MakeYourMark = ('Make Your Mark', ((23, 37),), "Barker's Marker$", "Barker's Markers", 'Mark', 'Marky', 'Markers')
-    MakeYourMove = ('Make Your Move', ((18, P.inf),), 'Move', 'Movey', 'MYM')
-    MasterKey = ('Master Key', ((11, P.inf),), 'Key')
-    MoneyGame = ('Money Game', ((1, P.inf),), 'Big Money Game', 'Money', 'Mony', 'BigMoney')
-    MoreOrLess = ('More or Less', ((35, P.inf),), 'MoL', 'Moley')
-    MostExpensive = ('Most Expen$ive', ((1, P.inf),), 'Most Expensive', 'ME')
+    MakeYourMove = ('Make Your Move', ((18, SI.inf),), 'Move', 'Movey', 'MYM')
+    MasterKey = ('Master Key', ((11, SI.inf),), 'Key')
+    MoneyGame = ('Money Game', ((1, SI.inf),), 'Big Money Game', 'Money', 'Mony', 'BigMoney')
+    MoreOrLess = ('More or Less', ((35, SI.inf),), 'MoL', 'Moley')
+    MostExpensive = ('Most Expen$ive', ((1, SI.inf),), 'Most Expensive', 'ME')
     MysteryPrice = ('Mystery Price', ((2,),), 'Mystery')
-    NowOrThen = ('Now....or Then', ((9, P.inf),), 'Now....and Then', 'NoT', 'NaT')
-    OneAway = ('One Away', ((13, P.inf),), 'OA', 'Away')
+    NowOrThen = ('Now....or Then', ((9, SI.inf),), 'Now....and Then', 'NoT', 'NaT')
+    OneAway = ('One Away', ((13, SI.inf),), 'OA', 'Away')
     OnTheNose = ('On the Nose', ((13, 14),), 'Nose', 'Nosey')
     OnTheSpot = ('On the Spot', ((31, 33),), 'Spot', 'Spotty')
-    OneRightPrice = ('1 Right Price', ((4, P.inf),), 'ORP', '1RP')
+    OneRightPrice = ('1 Right Price', ((4, SI.inf),), 'ORP', '1RP')
     OneRightPrice3 = ('ORP Three Furs', ((1,),), 'ORF', 'ORPF', '1RPF', 'ORP3', '1RP3', 'ORP3F', '1RP3F')
-    OneWrongPrice = (u'One Wr\u00f8ng Price', ((27, P.inf),), '1 Wrong Price', 'OWP', '1WP')
-    PassTheBuck = ('Pass the Buck', ((30, P.inf),), 'Buck', 'PtB')
-    Pathfinder = ('Pathfinder', ((15, P.inf),), 'Path')
-    PayTheRent = ('Pay the Rent', ((39, P.inf),), 'Rent', 'PtR')
+    OneWrongPrice = (u'One Wr\u00f8ng Price', ((27, SI.inf),), '1 Wrong Price', 'OWP', '1WP')
+    PassTheBuck = ('Pass the Buck', ((30, SI.inf),), 'Buck', 'PtB')
+    Pathfinder = ('Pathfinder', ((15, SI.inf),), 'Path')
+    PayTheRent = ('Pay the Rent', ((39, SI.inf),), 'Rent', 'PtR')
     PennyAnte = ('Penny Ante', ((7, 30),), 'Penny79', 'PennyAnte', 'Ante')
     PhoneHomeGame = ('Phone Home Game', ((12, 18),), 'Phone', 'Phoney', 'Home', 'Homey', 'Phg')
-    PickANumber = ('Pick-a-Number', ((20, P.inf),), 'Pa#', 'PaN')
+    PickANumber = ('Pick-a-Number', ((20, SI.inf),), 'Pa#', 'PaN')
     PickAPair = (
         'Pick-a-Pair',
         (
             (10, 17),
-            (19, P.inf),
+            (19, SI.inf),
         ),
         'Pick a Pair',
         'Pair',
@@ -118,45 +119,45 @@ class PG(enum.Enum):
         'Smear',
         'Pappy',
     )
-    Plinko = ('Plinko', ((11, P.inf),), 'Dinko', 'Plnk')
-    PocketChange = (u'Pocket \u00a2hange', ((33, P.inf),), 'Pocket', 'Pckt')
+    Plinko = ('Plinko', ((11, SI.inf),), 'Dinko', 'Plnk')
+    PocketChange = (u'Pocket \u00a2hange', ((33, SI.inf),), 'Pocket', 'Pckt')
     PokerGame = ('Poker Game', ((4, 35),), 'Poker')
     ProfessorPrice = ('Professor Price', ((6,),), 'Professor', 'Prof')
-    PunchABunch = ('Punch a Bunch', ((7, P.inf),), 'Punch', 'Punchy', 'Pnch', 'PAB')
-    PushOver = ('Push Over', ((27, P.inf),), 'Push', 'Pushy')
-    RaceGame = ('Race Game', ((2, P.inf),), 'Race', 'Racey')
-    RangeGame = ('Range Game', ((1, P.inf),), 'Range', 'Rangey', 'Rang')
-    RatRace = ('Rat Race', ((38, P.inf),), 'Rat', 'Ratty')
-    SafeCrackers = ('Safe Crackers', ((4, P.inf),), 'Safe', 'Safey')
-    SecretX = ('Secret "X"', ((6, P.inf),), '"X"', 'X', 'Secret')
-    ShellGame = ('Shell Game', ((2, P.inf),), 'Shell', 'Shelly', 'Shel')
-    ShoppingSpree = ('Shopping Spree', ((24, P.inf),), 'Spree', 'Spre')
+    PunchABunch = ('Punch a Bunch', ((7, SI.inf),), 'Punch', 'Punchy', 'Pnch', 'PAB')
+    PushOver = ('Push Over', ((27, SI.inf),), 'Push', 'Pushy')
+    RaceGame = ('Race Game', ((2, SI.inf),), 'Race', 'Racey')
+    RangeGame = ('Range Game', ((1, SI.inf),), 'Range', 'Rangey', 'Rang')
+    RatRace = ('Rat Race', ((38, SI.inf),), 'Rat', 'Ratty')
+    SafeCrackers = ('Safe Crackers', ((4, SI.inf),), 'Safe', 'Safey')
+    SecretX = ('Secret "X"', ((6, SI.inf),), '"X"', 'X', 'Secret')
+    ShellGame = ('Shell Game', ((2, SI.inf),), 'Shell', 'Shelly', 'Shel')
+    ShoppingSpree = ('Shopping Spree', ((24, SI.inf),), 'Spree', 'Spre')
     ShowerGame = ('Shower Game', ((7,),), 'Shower')
-    SideBySide = ('Side by Side', ((22, P.inf),), 'Side', 'Sidey', 'SbS')
+    SideBySide = ('Side by Side', ((22, SI.inf),), 'Side', 'Sidey', 'SbS')
     SmashForCash = ('Smash for Ca$h', ((44,), (48,)), 'Smash For Cash', 'Smash', 'Smashy')
-    SpellingBee = ('Spelling Bee', ((17, P.inf),), 'Bee')
+    SpellingBee = ('Spelling Bee', ((17, SI.inf),), 'Bee')
     SplitDecision = ('Split Decision', ((24, 25),), 'Split', 'Splitty', 'Decision')
-    SqueezePlay = ('Squeeze Play', ((6, P.inf),), 'Squeeze', 'Squeezy', 'Sqze')
-    StackTheDeck = ('Stack the Deck', ((35, P.inf),), 'Stack', 'Stacky', 'Deck', 'Stac', 'STD')
+    SqueezePlay = ('Squeeze Play', ((6, SI.inf),), 'Squeeze', 'Squeezy', 'Sqze')
+    StackTheDeck = ('Stack the Deck', ((35, SI.inf),), 'Stack', 'Stacky', 'Deck', 'Stac', 'STD')
     StepUp = ('Step Up', ((30, 43),), 'Step', 'Steppy')
     SuperBall = ('Super Ball!!', ((9, 26),), 'SuperBall!!', 'SuperBall', 'Ball', 'SB')
     SuperSaver = ('$uper $aver', ((17, 24),), 'Super Saver', 'Saver', 'Savery')
-    SwapMeet = ('Swap Meet', ((20, P.inf),), 'Swap', 'Swappy')
-    Switch = ('Switch?', ((20, P.inf),), 'Switch?', 'Switch', 'S?', 'Sw?')
-    Switcheroo = ('Switcheroo', ((5, P.inf),), 'Switcheroo', 'Roo')
-    TakeTwo = ('Take Two', ((6, P.inf),), 'T2')
+    SwapMeet = ('Swap Meet', ((20, SI.inf),), 'Swap', 'Swappy')
+    Switch = ('Switch?', ((20, SI.inf),), 'Switch?', 'Switch', 'S?', 'Sw?')
+    Switcheroo = ('Switcheroo', ((5, SI.inf),), 'Switcheroo', 'Roo')
+    TakeTwo = ('Take Two', ((6, SI.inf),), 'T2')
     TelephoneGame = ('Telephone Game', ((7,),), 'Telephone')
-    Temptation = ('Temptation', ((1, P.inf),), 'Temptation', 'Tempt', 'Tempty', 'TMPT')
-    TenChances = ('10 Chances', ((3, P.inf),), 'Ten Chances', '10C')
-    ThatsTooMuch = ("That's Too Much!", ((29, P.inf),), 'TTM')
-    ThreeStrikes = ('3 Strikes', ((4, P.inf),), '3 Strikes +', 'Strikes', '3X', '3X+')
+    Temptation = ('Temptation', ((1, SI.inf),), 'Temptation', 'Tempt', 'Tempty', 'TMPT')
+    TenChances = ('10 Chances', ((3, SI.inf),), 'Ten Chances', '10C')
+    ThatsTooMuch = ("That's Too Much!", ((29, SI.inf),), 'TTM')
+    ThreeStrikes = ('3 Strikes', ((4, SI.inf),), '3 Strikes +', 'Strikes', '3X', '3X+')
     TimeIsMoney03 = ("Time Is Money '03", ((32,),), 'Time Is Money', 'Time03', 'TiM03')
-    TimeIsMoney = ('Time I$ M\u00f8ney', ((43, P.inf),), 'Time', 'TiM')
-    ToThePenny = ("To The Penny", ((50, P.inf),), 'Penny', 'Peny', 'TTP')
+    TimeIsMoney = ('Time I$ M\u00f8ney', ((43, SI.inf),), 'Time', 'TiM')
+    ToThePenny = ("To The Penny", ((50, SI.inf),), 'Penny', 'Peny', 'TTP')
     TraderBob = ('Trader Bob', ((8, 14),), 'Trader', 'Trade', 'Tradey')
-    TriplePlay = ('Triple Play', ((29, P.inf),), 'Triple', 'TP')
-    TwoForThePriceOfOne = ('2 for the Price of 1', ((18, P.inf),), '241', '2for1', 'twoforone', 'twofor1')
-    VendOPrice = ('Vend-O-Price', ((44, P.inf),), 'Vend', 'Vendy')
+    TriplePlay = ('Triple Play', ((29, SI.inf),), 'Triple', 'TP')
+    TwoForThePriceOfOne = ('2 for the Price of 1', ((18, SI.inf),), '241', '2for1', 'twoforone', 'twofor1')
+    VendOPrice = ('Vend-O-Price', ((44, SI.inf),), 'Vend', 'Vendy')
     WalkOfFame = ('Walk of Fame', ((12, 14),), 'Walk', 'Walky', 'Fame', 'Famey', 'WOF')
     _UNKNOWN = ('??????????', tuple(), 'UNKNOWN')
 
@@ -165,8 +166,8 @@ class PG(enum.Enum):
         self.altNames = altNames
         self.activeSeasons = reduce(
             operator.or_,
-            [P.singleton(*sRange) if len(sRange) == 1 else P.closed(*sRange) for sRange in activeSeasons],
-            P.empty(),
+            [SI.singleton(*sRange) if len(sRange) == 1 else SI.closed(*sRange) for sRange in activeSeasons],
+            SI.empty(),
         )
 
     @cached_property
@@ -183,17 +184,17 @@ class PG(enum.Enum):
                 return a.upper()
         return self.sheetName[:4].upper()
 
-    def activeIn(self, r: Union[Range, Portion, int]):
+    def activeIn(self, r: Union[Range, SeasonInterval, int]):
         return self.activeSeasons.overlaps(
-            P.closedopen(r.start, r.stop) if type(r) == range else P.singleton(r) if type(r) == int else r
+            SI.closedopen(r.start, r.stop) if type(r) == range else SI.singleton(r) if type(r) == int else r
         )
 
-    def fullyActiveIn(self, r: Union[Range, Portion]):
-        return (P.closedopen(r.start, r.stop) if type(r) == range else r) in self.activeSeasons
+    def fullyActiveIn(self, r: Union[Range, SeasonInterval]):
+        return (SI.closedopen(r.start, r.stop) if type(r) == range else r) in self.activeSeasons
 
     @property
     def retired(self):
-        return self.activeSeasons.upper != P.inf and CURRENT_SEASON not in self.activeSeasons
+        return self.activeSeasons.upper != SI.inf and CURRENT_SEASON not in self.activeSeasons
 
     @property
     def firstSeason(self):
@@ -226,8 +227,9 @@ for e in PG:
     for a in e.altNames:
         PG.lookup_table[a] = e
 
+PG.map_dict = {s.lower(): pg.sheetName for s, pg in PG.lookup_table.items()}
+
 PG.partition_lookup = CaseInsensitiveDict()
-from bidict import bidict
 
 PG.partition_table = bidict()
 
@@ -532,10 +534,13 @@ _build_table_entry(
 )
 _build_table_entry('NO_FIRST', (), _pg_strs_convert('gas 10c time03 trader spot card'))
 _build_table_entry('BAILOUT', ('bailout',), _pg_strs_convert('gas bag buck rent seat bee tempt step penny punch roll'))
+_build_table_entry('TIMED', ('timed',), _pg_strs_convert('split time03 time bonkers seat clock race roo'))
 
 PG.partition_table['CAR_BOATABLE'] = frozenset(
     (PG.MoneyGame, PG.GoldenRoad, PG.BullseyeI, PG.DoubleBullseye, PG.AnyNumber, PG.FivePriceTags, PG.LuckySeven)
 )
+
+PG.CAR_BOATABLE_STRS = {str(pg) for pg in PG.partition_table['CAR_BOATABLE']}
 
 # END LOOKUP TABLE SETUP
 
@@ -558,20 +563,22 @@ class PGPlaying:
     def __post_init__(self):
         if not self.pg:
             self.pg = PG.lookup_table[self.pg_str]
-        # if self.pg == PG.PickAPair:
-        #     self.pg_str = self.pg_str.replace('A', 'a')
-        # elif "'S" in self.pg_str:
-        #     self.pg_str = self.pg_str.replace("'S", "'s")
-        # elif "And" in self.pg_str:
-        #     self.pg_str = self.pg_str.replace("And", "and")
-        # elif 'In' in self.pg_str and 'Or' in self.pg_str:
-        #     self.pg_str = self.pg_str.replace("In", "in").replace("Or", "or")
 
-    @lfu_cache(maxsize=int(len(PG) * len(PLAYING_FLAGS) / 4))
     def __str__(self):
-        s = self.pg_str + (
-            (' ({})'.format(''.join(pf if int(b) else '' for pf, b in zip(PLAYING_FLAGS, '{:010b}'.format(self.flag)))))
-            if self.flag
-            else ''
-        )
-        return s.replace('car', 'boat') if self.flag & 0b1 and self.pg in PG.partition_table['CAR_BOATABLE'] else s
+        return _pgp_str(self.pg_str, self.flag, self.pg)
+
+
+def _pgp_str(pg_str, flag, pg):
+    s = pg_str + (' ({})'.format(FLAG_STRS[flag]) if flag else '')
+    return s.replace('car', 'boat') if flag & 0b1 and pg in PG.partition_table['CAR_BOATABLE'] else s
+
+
+def _flag_str(flag):
+    return ''.join(pf if int(b) else '' for pf, b in zip(PLAYING_FLAGS, '{:010b}'.format(flag)))
+
+
+FLAG_STRS = {2**f: _flag_str(2**f) for f in range(len(PLAYING_FLAGS) + 1)}
+FLAG_STRS |= {
+    sum(2**f for f in fl): _flag_str(sum(2**f for f in fl))
+    for fl in itertools.combinations(range(len(PLAYING_FLAGS) + 1), 2)
+}

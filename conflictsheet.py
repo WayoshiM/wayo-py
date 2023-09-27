@@ -382,9 +382,9 @@ class ConflictSheet:
             bit_cond = (
                 (lambda b: b < 9)
                 if time in ('daytime', 'unaired')
-                else lambda b: bit < 7
+                else lambda b: b < 7
                 if time == 'syndicated'
-                else (lambda b: not (7 <= bit <= 8))
+                else (lambda b: not (7 <= b <= 8))
             )
             l = [
                 {'type': 'formula', 'criteria': f'={col}2={2**bit}', 'format': {'bg_color': bgc}}
@@ -414,7 +414,7 @@ class ConflictSheet:
         excel_fp = io.BytesIO()
 
         with xlsxwriter.Workbook(excel_fp) as wb:
-            for era in self_df_dict.keys():
+            for era in self._df_dict.keys():
                 df_out = (
                     self._df_dict[era]
                     .lazy()
@@ -502,7 +502,7 @@ class ConflictSheet:
             row['S'] = CURRENT_SEASON
 
         if pgps:
-            for slot, pgps in enumerate(pgps, 1):
+            for slot, pgp in enumerate(pgps, 1):
                 row[f'PG{slot}'] = str(pgp)
                 row[f'PG{slot}_p'] = str(pgp.pg)
                 row[f'PG{slot}_f'] = pgp.flag
@@ -515,6 +515,10 @@ class ConflictSheet:
             # allow None -> null
             row['NOTES' if era == 'daytime' else 'SPECIAL'] = notes
 
+        row['PG_n'] = 99999 # filler
+        if era == 'daytime':
+            row['_PROD'] = row['PROD'][-1] + row['PROD'][:-1]
+
         df_row = pl.from_dict(row, schema=self._df_dict[era].schema)
 
         if era == 'primetime':
@@ -524,13 +528,7 @@ class ConflictSheet:
                 self._df_dict[era]
                 .drop('PG_n')
                 .filter(pl.col('PROD') != prodNumber)
-                .merge_sorted(
-                    # we know the PROD format will be more specific here.
-                    df_row.with_columns(pl.col('PROD').str.replace_all('^(\d{4})([KL])$', '$2$1').alias('_PROD')).drop(
-                        'PG_n'
-                    ),
-                    '_PROD',
-                )
+                .merge_sorted(df_row.drop('PG_n'), '_PROD')
                 .with_row_count('PG_n', 1)
             )
 

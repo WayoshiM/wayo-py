@@ -165,15 +165,10 @@ class CompendiumCog(commands.Cog, name='Compendium'):
             try:
                 self.wc = WheelCompendium(loop=self.bot.loop, debug=self._debug)
 
-                wait = 0
-                m = None
+                m = await ctx.send('`I am loading the compendium, just a moment...`')
                 while not self.wc.loaded:
                     await asyncio.sleep(1)
-                    wait += 1
-                    if wait == 2:
-                        m = await ctx.send('`I am loading the compendium, just a moment...`')
-                if m:
-                    await m.delete()
+                await m.delete()
 
                 if self.wc.sanity_checks:
                     await self.send_sanity()
@@ -550,7 +545,7 @@ class CompendiumCog(commands.Cog, name='Compendium'):
         The bot will scan all users' messages for letters/puzzle guesses unless single=True is specified, then the bot will only respond to the command giver's messages.
         """
 
-        total_expr, _, _ = build_puzzle_search_expr(options)
+        total_expr, _, _, _ = build_puzzle_search_expr(options)
 
         sub_df = await asyncio.to_thread(self.wc.dfs[options.time].filter(total_expr).collect)
         if not sub_df.height:

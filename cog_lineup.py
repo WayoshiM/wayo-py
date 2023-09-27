@@ -4,6 +4,7 @@ import logging
 import operator
 import random
 import string
+import traceback
 from collections import OrderedDict
 from copy import copy
 from datetime import *
@@ -423,8 +424,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             del self.latest_conflict[view]
             view.finish()
             await mes.edit(view=view)
-            await asyncio.to_thread(self.cs.save_excel)
-            _log.info('end saving excel at ' + str(datetime.now()))
+            try:
+                await asyncio.to_thread(self.cs.save_excel)
+                _log.info('end saving excel at ' + str(datetime.now()))
+            except Exception as e:
+                await mes.add_reaction('❌')
+                _log.error('failed to save excel at ' + str(datetime.now()))
+                traceback.print_tb(e.__traceback__)
 
     @played.command(aliases=['conflictsheet', 'sheet', 'cs'], with_app_command=False)
     async def concurrencesheet(
@@ -466,7 +472,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             try:
                 row = (
                     self.cs.get('daytime')
-                    .select(pl.col('PROD', 'S') | cs.matches('^PG\d$'))
+                    .select(cs.by_name('PROD', 'S') | cs.matches('^PG\d$'))
                     .row(by_predicate=pl.col('PROD') == options.prodNumber)
                 )
                 retro = True
@@ -581,8 +587,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             del self.latest_meta[view]
             view.finish()
             await mes.edit(view=view)
-            await asyncio.to_thread(self.cs.save_excel)
-            _log.info('META: end saving excel at ' + str(datetime.now()))
+            try:
+                await asyncio.to_thread(self.cs.save_excel)
+                _log.info('META: end saving excel at ' + str(datetime.now()))
+            except Exception as e:
+                await mes.add_reaction('❌')
+                _log.error('META: failed to save excel at ' + str(datetime.now()))
+                traceback.print_tb(e.__traceback__)
 
     @lineup.command(name='edit', aliases=['e'], with_app_command=False)
     async def editLineup(self, ctx, *, options: EditLineupFlags):

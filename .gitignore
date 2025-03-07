@@ -12,3 +12,4 @@ ttyd.py
 *.pyc
 battleships/*
 price_images/*
+joke_sounds/*

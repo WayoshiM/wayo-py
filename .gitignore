@@ -1,0 +1,14 @@
+*test*
+*secrets*
+*old*
+cog_background.py
+*.ipynb
+*greco*
+*.csv
+*yahtzee*
+runtime.txt
+Pricing_Games.txt
+ttyd.py
+*.pyc
+battleships/*
+price_images/*

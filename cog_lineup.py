@@ -218,7 +218,7 @@ async def trim_query(q: pl.LazyFrame, sortBy: str = 'prod', since: bool = False)
 def gen_lineup_submes(sub_df: pl.DataFrame, initial_str: str, time: str):
     q = sub_df.lazy()
 
-    if notes_col := 'SPECIAL' if time == 'primetime' else '' if time == 'syndicated' else 'NOTES':
+    if notes_col := ('SPECIAL' if time == 'primetime' else '' if time == 'syndicated' else 'NOTES'):
         notes_check = sub_df.select(pl.col(notes_col).is_null()).to_series()
         if notes_check.all():
             q = q.drop(notes_col)
@@ -270,7 +270,10 @@ class CSUpdateView(dui.View):
     async def update(self, interaction, button):
         assert not self.job
         self.job = self.scheduler.add_job(
-            self.callback_func, 'date', args=(self,), run_date=datetime.now(tz=SCHEDULER_TZ) + timedelta(seconds=1)
+            self.callback_func,
+            'date',
+            args=(self,),
+            run_date=datetime.now(tz=SCHEDULER_TZ) + timedelta(seconds=1),
         )
         button.label = 'Processing...'
         button.emoji = '🚧'
@@ -307,7 +310,7 @@ class EditLineupFlags(commands.FlagConverter, delimiter='=', case_insensitive=Tr
 class TimeFlags(commands.FlagConverter, delimiter='=', case_insensitive=True):
     time: TimeConverter = commands.flag(aliases=['version'], default='daytime')
     start: Union[SEASON_RANGE, str] = commands.flag(
-        default=lambda ctx: 1 if ctx.command.name in ('search', 'lineupRandom') else CURRENT_SEASON - 4
+        default=lambda ctx: (1 if ctx.command.name in ('search', 'lineupRandom') else CURRENT_SEASON - 4)
     )
     end: Union[SEASON_RANGE, str] = commands.flag(default=CURRENT_SEASON)
     dateFormat: dateStr = commands.flag(aliases=['format'], default='%m/%d/%y')
@@ -395,7 +398,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         """Commands specifically related to viewing and editing TPiR lineups."""
         await ctx.send('Invalid subcommand (see `help lineup`).')
 
-    @commands.hybrid_group(aliases=['playings', 'playing', 'play', 'p'], invoke_without_command=True, case_insensitive=True)
+    @commands.hybrid_group(
+        aliases=['playings', 'playing', 'play', 'p'],
+        invoke_without_command=True,
+        case_insensitive=True,
+    )
     async def played(self, ctx):
         """Commands specifically related to statistics of Pricing Game playings in TPiR lineups."""
         await ctx.send('Invalid subcommand (see `help played`).')
@@ -428,7 +435,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             today = datetime.now(tz=SCHEDULER_TZ).date()
             _log.info(f'feeding in {pgps} to cs.update')
             await asyncio.to_thread(
-                self.cs.update, prodNumber, pgps, not retro, None if retro else today, None if retro else today, None
+                self.cs.update,
+                prodNumber,
+                pgps,
+                not retro,
+                None if retro else today,
+                None if retro else today,
+                None,
             )
             _log.info('end cs at ' + str(datetime.now()))
             del self.latest_conflict[view]
@@ -578,7 +591,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 self.latest_conflict[v] = (m, options.prodNumber, pgps, retro)
         else:
             pgps = [
-                PGPlaying(pg.sheetName, 2 ** PLAYING_FLAGS_SINGLE.index(f) if f != '0' else 0, pg=pg)
+                PGPlaying(
+                    pg.sheetName,
+                    2 ** PLAYING_FLAGS_SINGLE.index(f) if f != '0' else 0,
+                    pg=pg,
+                )
                 for pg, f in zip(pgs, options.pgFlags)
             ]
             gs = self.cs.gen_sheet(pgps, ep, epText, options.time)
@@ -606,7 +623,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     async def editLineup(self, ctx, *, options: EditLineupFlags):
         """Edit a lineup's date(s) and/or notes. Currently only Wayoshi and dftackett can confirm this command, but anyone can set it up.
 
-        Notes should NOT be in quotes. Use "notes=empty" to specifying removing the notes for the episode."""
+        Notes should NOT be in quotes. Use "notes=empty" to specifying removing the notes for the episode.
+        """
 
         assert options.intended_date or options.airdate or options.notes
 
@@ -647,14 +665,27 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         notes_str = 'Do not change' if not options.notes else '' if empty_notes else options.notes
         input_str = f'PROPOSED CHANGES:\n\tAIRDATE: {ad_str}\n\tINT. DATE: {ind_str}\n\t{n_col}: {notes_str}'
 
-        v = CSUpdateView(self, options.prodNumber, True, ctx.guild, self.bot.SCHEDULER, pgUpdate=False)
+        v = CSUpdateView(
+            self,
+            options.prodNumber,
+            True,
+            ctx.guild,
+            self.bot.SCHEDULER,
+            pgUpdate=False,
+        )
 
         # if self.latest_meta:
         # 	mm = self.latest_meta[-1]
         # 	await mm.edit(view=None)
 
         m = await ctx.send(f'```{input_str}\n\n{current}```', view=v)
-        self.latest_meta[v] = (m, options.prodNumber, ad, ind, None if empty_notes else options.notes)
+        self.latest_meta[v] = (
+            m,
+            options.prodNumber,
+            ad,
+            ind,
+            None if empty_notes else options.notes,
+        )
 
     async def cs_cancel(self, view):
         async with self.latest_lock:
@@ -690,7 +721,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         If bySeason is non-zero, partition the output by the given number of ep (provided the given time has ep).
 
-        For daytime, playings with the educated guess flag (?) can be optionally excluded."""
+        For daytime, playings with the educated guess flag (?) can be optionally excluded.
+        """
 
         pgs = list(itertools.takewhile(operator.truth, ctx.args[2:8]))
         pgs_set = set(pgs)
@@ -736,7 +768,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 flags = [fl - {2**q for q in Q_FLAG} if fl else ALL_FLAGS_BUT_GUESS for fl in flags]
 
             sub_df = await trim_query(
-                self.cs.concurrence_query(ep, options.time, tuple(pgs), tuple(flags)), options.sortBy, options.since
+                self.cs.concurrence_query(ep, options.time, tuple(pgs), tuple(flags)),
+                options.sortBy,
+                options.since,
             )
 
             ttl = sub_df.height
@@ -767,10 +801,15 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                             total_str.append(sub_is)
                     total_str = initial_str + LINEUP_SEP + LINEUP_SEP.join(total_str)
             else:
-                initial_str = '{}, {}{}: {}'.format(pgs_str, epText, ', no ? flag' if options.excludeEducated else '', ttl)
+                initial_str = '{}, {}{}: {}'.format(
+                    pgs_str,
+                    epText,
+                    ', no ? flag' if options.excludeEducated else '',
+                    ttl,
+                )
                 if options.showLineup and ttl:
                     total_str = gen_lineup_submes(
-                        sub_df.drop('S') if ep and options.start == options.end else sub_df,
+                        (sub_df.drop('S') if ep and options.start == options.end else sub_df),
                         initial_str,
                         options.time,
                     )
@@ -781,7 +820,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             await ctx.send(f'`{initial_str}`')
 
     @played.command(aliases=['slot', 's'], with_app_command=False)
-    async def slots(self, ctx, pgQueries: commands.Greedy[Union[PGConverter, PGGroupConverter]], *, options: SlotFlags):
+    async def slots(
+        self,
+        ctx,
+        pgQueries: commands.Greedy[Union[PGConverter, PGGroupConverter]],
+        *,
+        options: SlotFlags,
+    ):
         """Fetches full slot counts (with the given flag if provided) for each query.
 
         A pgQuery in this context is a valid single PG, or a PGGroup. A PGGroup is treated as the sum of all its underlying PGs.
@@ -876,7 +921,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                             if not any(pg.activeIn(ep) for pg in qPG):
                                 fs.append(
                                     'No {} game {} active in {}.'.format(
-                                        qPGName, 'is' if CURRENT_SEASON in ep else 'was', epText
+                                        qPGName,
+                                        'is' if CURRENT_SEASON in ep else 'was',
+                                        epText,
                                     )
                                 )
                                 continue
@@ -888,7 +935,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                                     fs.append('{} was not created until S{}.'.format(pgQ, pgQ.firstSeason))
                                 else:
                                     fs.append(
-                                        '{} {} inactive in {}.'.format(pgQ, 'is' if CURRENT_SEASON in ep else 'was', epText)
+                                        '{} {} inactive in {}.'.format(
+                                            pgQ,
+                                            'is' if CURRENT_SEASON in ep else 'was',
+                                            epText,
+                                        )
                                     )
                                 continue
 
@@ -913,41 +964,82 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                             pl.col('PG').is_in([str(pg) for pg in pgQ]) if isPGGroup else pl.col('PG') == str(pgQ)
                         )
                         .drop('PG')
-                        .group_by([(pl.col('S').rank('dense') - 1) // options.bySeason, 'flag'])
-                        .agg(pl.exclude('S').sum())
+                        # 2025-08-09 - I had a rank('dense') of column S here before, then a flat -1 adjustment.
+                        # I'm not sure on review why I ever had a rank, maybe how sub_slots_df was at one point?
+                        # The - 1 I think was clearly wrong and took an example of Shell Game starting in S2
+                        # for me to notice it is simply the first season (I may have only used S1-x as a naive test).
+                        .group_by(
+                            S=(pl.col('S') - ep_list[0]) // options.bySeason,
+                            flag='flag',
+                        )
+                        .sum()
                     )
+
+                    # _log.debug(ppp(sub_slots_df.filter(
+                    #         pl.col('PG').is_in([str(pg) for pg in pgQ]) if isPGGroup else pl.col('PG') == str(pgQ)
+                    #     ).with_columns(rank=(pl.col('S') - 1) // options.bySeason).collect()))
+
                     if not options.pgFlags:
                         sc_t = (SlotCertainty.SLOT, SlotCertainty.GAME)
                         h_unc = (
                             h.select(
-                                [pl.col('S')]
-                                + [
+                                'S',
+                                *[
                                     pl.when(pl.col('flag') == sc)
                                     .then(pl.concat_list(cs.matches(r'^PG\d$')).list.sum())
                                     .otherwise(pl.lit(0))
                                     .alias(f'PG{f}')
                                     for sc, f in zip(sc_t, '^?')
-                                ]
+                                ],
                             )
                             .group_by('S')
                             .sum()
                         )
+
                         h = (
                             h.filter(~has_any_flags('flag', frozenset(sc_t)))
-                            # 2025-02-05 - this needs to be outer in case a game only has unknown slotting in a season
-                            # like Race S2. suffix='' kills the dupe columns
-                            .join(h_unc, on='S', how='outer', suffix='')
                             .group_by('S')
-                            .agg(pl.exclude('flag').sum())
-                            .sort('S')
-                            .with_columns(pl.Series('S', sc_strs), pl.concat_list(pl.exclude('S')).list.sum().alias('ALL'))
+                            .sum()
+                            # 2025-02-05 - this needs to be outer/full in the edge case only uncertain is in a row,
+                            # such as Race S2 (this may be the only edge case).
+                            # 2025-08-09 - the join now comes after the aggregation to avoid multiple rows matching.
+                            # also, in later polars versions outer joins do not "coalesce" the common columns unless specified,
+                            # which led to a column duplication error when I had done suffix='' here
+                            # before coalesce was an option (or I lost track of polars functionality).
+                            .join(h_unc, on='S', how='full', coalesce=True)
+                            # needed in the Race S2 edge case
+                            .fill_null(0)
                         )
+
                     h = (
-                        pl.concat([h, h.select([pl.lit(epText).alias('S'), pl.exclude('S').sum()])])
+                        h.drop('flag', strict=False)
+                        .sort('S')
+                        .with_columns(
+                            # chunk 0 --> Sx-y, etc.
+                            S=pl.col('S').cast(pl.String).replace({str(e): scs for e, scs in enumerate(sc_strs)}),
+                            # add extra column of sums at this time
+                            ALL=pl.concat_list(pl.exclude('S')).list.sum(),
+                        )
+                    )
+                    # add extra row of sums at this time, and remove "S" from output,
+                    # and collect finally as LazyFrame doesn't support final steps
+                    h = (
+                        pl.concat(
+                            [
+                                h,
+                                h.select(
+                                    [
+                                        pl.lit(epText).alias('S'),
+                                        pl.exclude('S').sum(),
+                                    ]
+                                ),
+                            ]
+                        )
                         .rename({'S': ''})
                         .collect()
                     )
-                    h = h.select(pl.col(*[s.name for s in h if s.name not in ('PG^', 'PG?') or s.sum()]))
+                    # drop uncertain cols if 0 (iterating over Series columns)
+                    h = h.drop([s.name for s in h if s.name in ('PG^', 'PG?') and not s.sum()])
 
                     # add some line spacing between total row/column
                     # Oct 2023 - refactored as util method
@@ -1003,7 +1095,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         else:
                             fs.append(
                                 '{}{}, {}: {} | {}'.format(
-                                    qPGName, f_str, epText, ', '.join(str(freq) for freq in ssd_pg_certain), ssd_sum
+                                    qPGName,
+                                    f_str,
+                                    epText,
+                                    ', '.join(str(freq) for freq in ssd_pg_certain),
+                                    ssd_sum,
                                 )
                             )
                     else:
@@ -1025,7 +1121,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                                     )
                                     else 'was not played'
                                 ),
-                                epText if options.time in ('daytime', 'syndicated') else options.time.upper(),
+                                (epText if options.time in ('daytime', 'syndicated') else options.time.upper()),
                             )
                         )
 
@@ -1036,7 +1132,12 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
     @played.command(name='most', aliases=['m'], with_app_command=False)
     async def mostPlayed(
-        self, ctx, slots: slotsStr, pgGroups: commands.Greedy[PGGroupConverter], *, options: MostPlayedFlags
+        self,
+        ctx,
+        slots: slotsStr,
+        pgGroups: commands.Greedy[PGGroupConverter],
+        *,
+        options: MostPlayedFlags,
     ):
         """Fetches the N-most playings, out of all PGs (or only those PGs in the PGGroup(s), if given), in the slots given.
 
@@ -1044,7 +1145,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         A pgQuery in this context is a valid single PG, or a PGGroup. PGGroups are treated as shorthand for multiple single PGs.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ."""
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
+        """
 
         try:
             ep, epText, _ = await parse_time_options(ctx, options)
@@ -1098,7 +1200,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 if pgGroups
                 else 'all PGs'
             )
-            await send_long_mes(ctx, '{}, top {}, {}:\n\n{}'.format(epText, options.N, pg_str, '\n'.join(result)))
+            await send_long_mes(
+                ctx,
+                '{}, top {}, {}:\n\n{}'.format(epText, options.N, pg_str, '\n'.join(result)),
+            )
         else:
             await ctx.send(f'`None of the PG(s) given have been / were played in {epText}.`')
 
@@ -1124,7 +1229,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         For daytime, playings with the educated guess flag (?) can be optionally excluded.
 
-        PGs are all mapped to at least one single-word key. See the FAQ for a complete listing."""
+        PGs are all mapped to at least one single-word key. See the FAQ for a complete listing.
+        """
 
         pgs = list(itertools.takewhile(operator.truth, ctx.args[2:7]))
         assert len(set(pgs)) == len(pgs)
@@ -1208,7 +1314,12 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 val = 5  # 6 - len(pgs)
 
                 sub_df = sub_df.vstack(
-                    pl.DataFrame([pl.Series('PG', ['Plinko']), pl.Series('count', [val], dtype=pl.UInt32)])
+                    pl.DataFrame(
+                        [
+                            pl.Series('PG', ['Plinko']),
+                            pl.Series('count', [val], dtype=pl.UInt32),
+                        ]
+                    )
                     # unfortunately forced to resort here
                 ).sort('count', True)
 
@@ -1235,8 +1346,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     await ctx.send(
                         '`{} {} played in {} ({}){}.`'.format(
                             pgs_str,
-                            'has not been' if CURRENT_SEASON in ep and not pgs[0].retired else 'was not',
-                            options.time if options.time != 'daytime' else 'this time period',
+                            ('has not been' if CURRENT_SEASON in ep and not pgs[0].retired else 'was not'),
+                            (options.time if options.time != 'daytime' else 'this time period'),
                             epText,
                             pgGroupStr,
                         )
@@ -1245,7 +1356,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     await ctx.send(
                         '`{} have no concurrences in {} ({}){}.`'.format(
                             pgs_str,
-                            options.time if options.time != 'daytime' else 'this time period',
+                            (options.time if options.time != 'daytime' else 'this time period'),
                             epText,
                             pgGroupStr,
                         )
@@ -1254,7 +1365,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
             if not N1:
                 result0 = filter(
-                    lambda pg2: pg2 != PG._UNKNOWN if options.time != 'daytime' else pg2.activeIn(ep),
+                    lambda pg2: (pg2 != PG._UNKNOWN if options.time != 'daytime' else pg2.activeIn(ep)),
                     (options.pgGroupCompare or set(list(PG))) - {PG.lookup(s) for s in sub_df.to_series()},
                 )
 
@@ -1329,11 +1440,17 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
     @lineup.command(name='date', aliases=['d'], with_app_command=False)
     async def lineupDate(
-        self, ctx, time: Optional[TimeConverter] = 'daytime', dateFormat: Optional[dateStr] = '%m/%d/%y', *, dates
+        self,
+        ctx,
+        time: Optional[TimeConverter] = 'daytime',
+        dateFormat: Optional[dateStr] = '%m/%d/%y',
+        *,
+        dates,
     ):
         """Lists every lineup that aired on any of the given date(s). Only applies to daytime and primetime.
 
-        Date formatting by default, for example, is "03/26/20" (leading zeros optional)."""
+        Date formatting by default, for example, is "03/26/20" (leading zeros optional).
+        """
         dates = re.split(r'\s+', dates)
         try:
             dts = [(datetime.strptime(d, dateFormat) - datetime(1970, 1, 1)).days for d in dates]
@@ -1349,7 +1466,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             await ctx.send(f'`No lineups in {time} for any of these dates.`')
 
     @lineup.command(name='prod_range', aliases=['prodRange', 'pr', 'productionRange'])
-    async def lineupProdRange(self, ctx, start: prodStr, end: prodStr, time: Optional[TimeConverter] = 'daytime'):
+    async def lineupProdRange(
+        self,
+        ctx,
+        start: prodStr,
+        end: prodStr,
+        time: Optional[TimeConverter] = 'daytime',
+    ):
         """Lists every lineup in a range of production numbers from start to end, inclusive, in the given time.
 
         For valid production code patterns, see the FAQ.
@@ -1371,7 +1494,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         if start_idx < end_idx:
             await send_long_mes(
                 ctx,
-                gen_lineup_submes(await trim_query(sub_df.lazy().slice(start_idx - 1, end_idx - start_idx + 1)), '', time),
+                gen_lineup_submes(
+                    await trim_query(sub_df.lazy().slice(start_idx - 1, end_idx - start_idx + 1)),
+                    '',
+                    time,
+                ),
             )
         else:
             await ctx.send(
@@ -1393,7 +1520,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
         Step can be any combination of number of days, weeks, months or years (in any order, e.g. "2mo1y3w4d"). Dates with no shows will automatically be excluded from the listing.
 
-        Date formatting by default, for example, is "03/26/20" (leading zeros optional)."""
+        Date formatting by default, for example, is "03/26/20" (leading zeros optional).
+        """
         try:
             startDate = datetime.strptime(start, dateFormat).date()
             endDate = date.today() if re.fullmatch('today', end, re.I) else datetime.strptime(end, dateFormat).date()
@@ -1414,7 +1542,8 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
     async def lineupRandom(self, ctx, N: Optional[NONNEGATIVE_INT] = 1, *, options: LineupRFlags):
         """Randomly picks and prints out N lineups from the dataset. If sort is False, random print order as well.
 
-        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ."""
+        The dataset used is determined by the time, start and end parameters. For more on these, see the FAQ.
+        """
 
         try:
             ep, epText, isDate = await parse_time_options(ctx, options)
@@ -1469,7 +1598,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
             words = [w.strip() for w in cond.split(';')]
 
             match [w.upper() for w in words]:
-                case ['NOTES' | 'N' | 'SPECIAL' | 'PROD' | 'NUMBER' | 'P' as col, regex]:
+                case [
+                    'NOTES' | 'N' | 'SPECIAL' | 'PROD' | 'NUMBER' | 'P' as col,
+                    regex,
+                ]:
                     col = _col_name_remapping.get(col, col)
                     if col == 'NOTES' and options.time != 'daytime':
                         raise ValueError('NOTES only exists in daytime. (SPECIAL is primetime.)')
@@ -1532,7 +1664,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                         elif pgCond[0].lower() == 'f' and re.match(FLAGS_REGEX, pgcu := pgCond[1:].upper()):
                             if flags != DEFAULT_FLAGS:
                                 raise ValueError(f'More than one flag specification in condition "{cond}".')
-                            flags = tuple(0 if i.isnumeric() else 2 ** PLAYING_FLAGS_SINGLE.index(i) for i in pgcu)
+                            flags = tuple((0 if i.isnumeric() else 2 ** PLAYING_FLAGS_SINGLE.index(i)) for i in pgcu)
                         else:
                             if pgq:
                                 raise ValueError(f'More than one PG/PGGroup in condition "{cond}".')
@@ -1652,7 +1784,9 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 total_expr = eval(re.sub('([A-Z])', r'(\1)', options.logicExpr))
 
             sub_df = await trim_query(
-                self.cs.endpoint_sub(None, options.time).filter(total_expr), options.sortBy, options.since
+                self.cs.endpoint_sub(None, options.time).filter(total_expr),
+                options.sortBy,
+                options.since,
             )
 
             all_full_hour = not (
@@ -1767,7 +1901,10 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     results.append((pg, prod, airdate))
 
             if results:
-                results.sort(key=lambda t: SORT_PROD(t[1]) if options.sortBy == 'prod' else t[2], reverse=True)
+                results.sort(
+                    key=lambda t: SORT_PROD(t[1]) if options.sortBy == 'prod' else t[2],
+                    reverse=True,
+                )
                 extra = f' ({extra_str})' if options.pgFlag is not None else ''
                 if options.sortBy == 'prod':
                     result_strs = [f'{pg}{extra}: {ind}, ' + ts.strftime('%b %d %Y') for pg, ind, ts in results]
@@ -1790,12 +1927,17 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                 )
 
     @played.command(aliases=['proj', 'p'], with_app_command=False)
-    async def projected(self, ctx, pgs: commands.Greedy[Union[PGConverter, PGGroupConverter, dayProdStr]]):
+    async def projected(
+        self,
+        ctx,
+        pgs: commands.Greedy[Union[PGConverter, PGGroupConverter, dayProdStr]],
+    ):
         """Does a simple pro-rated calculation projecting the number of playings for the PG this season, then if possible, compares that projection to this completed calculation for last season. PGGroups, or a (daytime-only) lineup code, can be included as shorthand for multiple games.
 
         Each game must be active in the current season to show as output in this command.
 
-        This command makes the most sense to run in the second half of an ongoing season, or over summer break."""
+        This command makes the most sense to run in the second half of an ongoing season, or over summer break.
+        """
 
         try:
             qs = []
@@ -1834,7 +1976,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         else:
             pgs = [str(pg) for pg in pgs]
             async with ctx.typing():
-                sub_slots_df = self.cs.endpoint_sub(SI.closed(CURRENT_SEASON - 1, CURRENT_SEASON), 'daytime', table='slots')
+                sub_slots_df = self.cs.endpoint_sub(
+                    SI.closed(CURRENT_SEASON - 1, CURRENT_SEASON),
+                    'daytime',
+                    table='slots',
+                )
                 prior_count, current_count = (
                     self.cs.get('daytime')
                     .filter(pl.col('S') >= CURRENT_SEASON - 1)
@@ -1870,7 +2016,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                             (pl.fold(pl.lit(0), operator.add, pl.exclude('PG')) * 190.0 / prior_count)
                             .round(0)
                             .cast(pl.Int8)
-                            .alias(f'S{CURRENT_SEASON-1}'),
+                            .alias(f'S{CURRENT_SEASON - 1}'),
                         ]
                     )
                 )
@@ -1880,7 +2026,7 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
                     .with_columns(pl.coalesce('PG', 'PG_right').alias('PG'))
                     .drop('PG_right')
                     .fill_null(strategy='zero')
-                    .with_columns((pl.col(f'S{CURRENT_SEASON}') - pl.col(f'S{CURRENT_SEASON-1}')).alias('DIF'))
+                    .with_columns((pl.col(f'S{CURRENT_SEASON}') - pl.col(f'S{CURRENT_SEASON - 1}')).alias('DIF'))
                     .sort('DIF')
                 )
                 result_df = result_df.with_columns(
@@ -1891,7 +2037,11 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
     @lineup.command(aliases=['c'])
     async def count(
-        self, ctx, seasons: commands.Greedy[SEASON_RANGE], do_range: bool = False, time: Optional[TimeConverter] = 'daytime'
+        self,
+        ctx,
+        seasons: commands.Greedy[SEASON_RANGE],
+        do_range: bool = False,
+        time: Optional[TimeConverter] = 'daytime',
     ):
         """Prints the number of episodes (currently) in the lineup sheet for the given seasons.
 
@@ -1994,7 +2144,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
 
     async def cog_command_error(self, ctx, e):
         if ctx.command.name == 'search':
-            if isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
+            if isinstance(
+                e,
+                (
+                    commands.errors.MissingRequiredArgument,
+                    commands.errors.MissingRequiredFlag,
+                ),
+            ):
                 await ctx.send('`At least one condition required. Use "condition=" or "cond=" (new syntax).`')
             elif isinstance(e, commands.ConversionError):
                 if isinstance(e.original, AssertionError):
@@ -2008,7 +2164,13 @@ class LineupCog(commands.Cog, name='TPIRLineups'):
         elif ctx.command.name == 'edit':
             if hasattr(e, 'original') and isinstance(e.original, AssertionError):
                 await ctx.send('`At least one of intended date, airdate, notes must be specified.`')
-            elif isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
+            elif isinstance(
+                e,
+                (
+                    commands.errors.MissingRequiredArgument,
+                    commands.errors.MissingRequiredFlag,
+                ),
+            ):
                 await ctx.send('`prodNumber required.`')
             else:
                 await ctx.send(f'`{e}`')

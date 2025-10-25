@@ -12,7 +12,12 @@ from dropboxwayo import dropboxwayo
 class JokeCog(commands.Cog, name='Jokes'):
     """Simple, mostly static commands with inside jokes in the G-R community."""
 
-    bob_ego_pg_skip_random = {PG.CheckGame: 2, PG.GrandGame: 5, PG.Bump: 9, PG.ClockGame: 11}
+    bob_ego_pg_skip_random = {
+        PG.CheckGame: 2,
+        PG.GrandGame: 5,
+        PG.Bump: 9,
+        PG.ClockGame: 11,
+    }
 
     async def cog_load(self):
         await self._load_jokes()
@@ -97,7 +102,7 @@ class JokeCog(commands.Cog, name='Jokes'):
     @joke_text.error
     async def jt_error(self, ctx, e):
         if hasattr(e, 'original') and isinstance(e.original, KeyError):
-            await ctx.send("Joke not found.")
+            await ctx.send('Joke not found.')
         elif hasattr(e, 'original') and isinstance(e.original, ValueError):
             await ctx.send(e.original)
 

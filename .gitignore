@@ -8,7 +8,11 @@ cog_background.py
 *yahtzee*
 runtime.txt
 Pricing_Games.txt
+todo.txt
 ttyd.py
 *.pyc
 battleships/*
 price_images/*
+joke_sounds/*
+*playground*
+.vscode/launch.json

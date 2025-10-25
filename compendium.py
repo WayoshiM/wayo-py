@@ -23,7 +23,7 @@ Range = Union[range, Iterable[int]]
 
 _log = logging.getLogger('wayo_log')
 
-CURRENT_SEASON = 42
+CURRENT_SEASON = 43
 COMPENDIUM_NOTES = """- On November 2 1992 (S10, #1796), R1 (VANNA'S PREGNANT) was heavily edited due to Vanna's miscarriage. Despite this editing we know what the puzzle was, so it does remain in the compendium.
 - On November 20 1998 (S16, #2980) and November 10 2003 (S21, #3946), there were clip shows celebrating the 3000th and 4000th show milestones. There are no actual puzzles that day and those dates are omitted entirely.
 - On November 16 2005 (S23, #4338), R1 was edited out of the final cut to Hurricane Katrina. This row is omitted from this version of the compendium entirely, as unlike the PREGNANT puzzle we have no idea what the puzzle was.
@@ -53,7 +53,20 @@ class WheelCompendium:
         self.join_cache = {}
 
         self._cols = {
-            'syndicated': ['S', 'DATE', 'EP', 'E/S', 'UNC', 'ROUND', 'PP', 'RL', 'PR', 'PUZZLE', 'CATEGORY', 'CLUE/BONUS'],
+            'syndicated': [
+                'S',
+                'DATE',
+                'EP',
+                'E/S',
+                'UNC',
+                'ROUND',
+                'PP',
+                'RL',
+                'PR',
+                'PUZZLE',
+                'CATEGORY',
+                'CLUE/BONUS',
+            ],
             'primetime': ['DATE', 'EP', 'HH', 'ROUND', 'PP', 'PUZZLE', 'CATEGORY'],
         }
 
@@ -65,7 +78,15 @@ class WheelCompendium:
 
         load = self.load(
             list(range(1, CURRENT_SEASON + 1))
-            + ['primetime', 'kids', 'daytime', 'au', 'gb', 'choicesprimetime', 'schedprimetime']
+            + [
+                'primetime',
+                'kids',
+                'daytime',
+                'au',
+                'gb',
+                'choicesprimetime',
+                'schedprimetime',
+            ]
             + [f'choices{s}0' for s in range(4, 6)]
             + [f'sched{s}0' for s in range(1, 6)]
         )
@@ -123,7 +144,14 @@ class WheelCompendium:
 
         for t in ('syndicated', 'primetime'):
             self.join_cache[f'sched_{t}'] = (
-                self.dfs[t].join(self.df_sched[t].drop(cs.contains('DATE')), on='EP', how='left').collect().lazy()
+                self.dfs[t]
+                .join(
+                    self.df_sched[t].drop(cs.contains('DATE'), 'S', 'E/S', strict=False),
+                    on='EP',
+                    how='left',
+                )
+                .collect()
+                .lazy()
             )
 
         # choice checks
@@ -136,7 +164,11 @@ class WheelCompendium:
 
             if k == 'syndicated':
                 cdfs = [
-                    (k2, pl.col('S').is_between(35, 40) if k2 == '4' else pl.col('S').is_between(41, 50), v2)
+                    (
+                        k2,
+                        (pl.col('S').is_between(35, 40) if k2 == '4' else pl.col('S').is_between(41, 50)),
+                        v2,
+                    )
                     for k2, v2 in v.items()
                 ]
             else:
@@ -240,7 +272,13 @@ class WheelCompendium:
             c_df = pl.concat(
                 [
                     c_df.with_columns(pl.col('S').cast(str)),
-                    c_df.select([pl.lit('ALL').alias('S'), pl.col('COV').sum(), pl.col('MAX').sum()]),
+                    c_df.select(
+                        [
+                            pl.lit('ALL').alias('S'),
+                            pl.col('COV').sum(),
+                            pl.col('MAX').sum(),
+                        ]
+                    ),
                 ]
             )
 
@@ -278,24 +316,25 @@ class WheelCompendium:
         if not is_syn and re.match(r'choices\d0', season):
             self._internal_df_choices['syndicated'][season[-2]] = df.select(
                 'EP',
-                pl.col('DATE').str.strptime(pl.Date, "%m/%d/%y"),
+                pl.col('DATE').str.strptime(pl.Date, '%m/%d/%y'),
                 pl.col('C').cast(pl.UInt8),
                 cs.matches(r'^CAT\d?$').cast(pl.Categorical('lexical')),
             )
         if not is_syn and re.match(r'sched\d0', season):
             self._df_schedsyn_dict[season[-2]] = df.select(
-                pl.col('DATE').str.strptime(pl.Date, "%m/%d/%y", strict=False),
+                pl.col('DATE').str.strptime(pl.Date, '%m/%d/%y', strict=False),
                 pl.coalesce(
-                    pl.col('DATE').str.strptime(pl.Date, "%m/%d/%y", strict=False).dt.strftime('%b %d %Y'), pl.col('DATE')
+                    pl.col('DATE').str.strptime(pl.Date, '%m/%d/%y', strict=False).dt.strftime('%b %d %Y'),
+                    pl.col('DATE'),
                 ).alias('DATE_STR'),
                 ~cs.contains(('DATE', 'THEME')),
                 pl.col('THEME').cast(pl.Categorical('lexical')),
             )
         if not is_syn and season == 'schedprimetime':
-            self.df_sched['primetime'] = df.with_columns(pl.col('DATE').str.strptime(pl.Date, "%m/%d/%y")).lazy()
+            self.df_sched['primetime'] = df.with_columns(pl.col('DATE').str.strptime(pl.Date, '%m/%d/%y')).lazy()
         elif season == 'choicesprimetime':
             self._internal_df_choices['primetime'] = df.select(
-                pl.col('DATE').str.strptime(pl.Date, "%m/%d/%y"),
+                pl.col('DATE').str.strptime(pl.Date, '%m/%d/%y'),
                 'EP',
                 pl.col('HH').cast(pl.Categorical),
                 pl.col('C').cast(pl.UInt8),
@@ -329,7 +368,7 @@ class WheelCompendium:
 
             if is_syn:
                 unique_dates = (
-                    df.select(pl.col('DATE').str.strptime(pl.Date, "%m/%d/%y").unique())
+                    df.select(pl.col('DATE').str.strptime(pl.Date, '%m/%d/%y').unique())
                     .with_columns(pl.col('DATE').dt.weekday().alias('WD'))
                     .collect()
                 )
@@ -365,7 +404,7 @@ class WheelCompendium:
                             pl.col('EXTRA').is_not_null()
                             & ~(
                                 pl.col('CATEGORY').str.contains(
-                                    '(MEGA|WHERE|CLUE|FILL|BLANK|NEXT|SLOGAN|WHERE|WHO|WHAT ARE WE|WHAT\'S)'
+                                    "(MEGA|WHERE|CLUE|FILL|BLANK|NEXT|SLOGAN|WHERE|WHO|WHAT ARE WE|WHAT'S)"
                                 )
                             )
                             & pl.col('BONUS').str.contains(r'^\w+$')

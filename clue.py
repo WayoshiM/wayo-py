@@ -49,7 +49,11 @@ class ClueCard(Enum):
                 if not i:
                     xc, yc = [round(magnitude * d) for d in c.image_size()]
                     spacing = xc // 9
-                    i = Image.new('RGBA', (len(cards) * xc + spacing * (len(cards) - 1), yc), (0, 0, 0, 0))
+                    i = Image.new(
+                        'RGBA',
+                        (len(cards) * xc + spacing * (len(cards) - 1), yc),
+                        (0, 0, 0, 0),
+                    )
                 if magnitude != 1:
                     j = j.resize((xc, yc), Image.BILINEAR)
                 i.paste(j, (x0, 0))
@@ -238,14 +242,24 @@ class MasterClueText(ClueText):
         self.room_text, self.suspect_text, self.weapon_text, self.murder_text = master_lists[:4]
         self.reaction_texts = master_lists[4:]
 
-    def generate(self, accusation: Tuple[MasterSuspect, MasterWeapon, MasterRoom], accuser: MasterSuspect) -> Sequence[str]:
+    def generate(
+        self,
+        accusation: Tuple[MasterSuspect, MasterWeapon, MasterRoom],
+        accuser: MasterSuspect,
+    ) -> Sequence[str]:
         s, w, r = accusation
         generated = list()
 
         generated.append(self.room_text[list(MasterRoom).index(r)])
         si = list(MasterSuspect).index(s)
         generated.append(self.suspect_text[si])
-        generated.append('{} {} the {}.'.format('He' if si % 2 else 'She', self.weapon_text[list(MasterWeapon).index(w)], w))
+        generated.append(
+            '{} {} the {}.'.format(
+                'He' if si % 2 else 'She',
+                self.weapon_text[list(MasterWeapon).index(w)],
+                w,
+            )
+        )
         generated.append(self.murder_text[si])
 
         if accuser is s:
@@ -323,7 +337,12 @@ class ClueBoard(metaclass=ABCMeta):
         assert all(len(self.board[i]) == self.Y for i in range(1, self.X))
 
         self.imagefn = imagefn
-        self.image_offset_x, self.image_offset_y, self.space_size_x, self.space_size_y = image_info
+        (
+            self.image_offset_x,
+            self.image_offset_y,
+            self.space_size_x,
+            self.space_size_y,
+        ) = image_info
 
         self.entrance_map = {i: r for i, r in zip(ascii_uppercase, list(room_type))}  # type: Dict[str, Room]
         self.entrance_exceptions = frozenset(entrance_exceptions)
@@ -403,7 +422,10 @@ class ClueBoard(metaclass=ABCMeta):
                 if m.direction is MoveDirection.DOOR:
                     if not moves:
                         raise ValueError('Cannot end a move at a door')
-                    elif moves[0].direction in (MoveDirection.DOOR, MoveDirection.SECRET):
+                    elif moves[0].direction in (
+                        MoveDirection.DOOR,
+                        MoveDirection.SECRET,
+                    ):
                         raise ValueError('Must move out of a door')
                     else:
                         if self.allow_combo_rolls and current_pos != self.player_positions[player]:
@@ -413,7 +435,10 @@ class ClueBoard(metaclass=ABCMeta):
                         except IndexError:
                             raise ValueError(f'{current_pos} does not have that many doors')
 
-                    if (current_pos, moves[0].direction.reverseDirection) in self.entrance_exceptions:
+                    if (
+                        current_pos,
+                        moves[0].direction.reverseDirection,
+                    ) in self.entrance_exceptions:
                         raise ValueError(f'Illegal move out of {current_pos}')
                 else:
                     raise ValueError('Must do secret or door (if multiple) in room')
@@ -527,7 +552,10 @@ class ClueBoard(metaclass=ABCMeta):
                 x0 = self.image_offset_x + round((x + 0.25) * self.space_size_x)
                 y0 = self.image_offset_y + round(y * self.space_size_y)
                 did.text((x0, y0), chr(c), font=self.df, fill=(0, 0, 0, 255))
-                bi.paste(Image.new('RGBA', (self.fs, self.fs), (255, 255, 255, 127)), (x0, y0))
+                bi.paste(
+                    Image.new('RGBA', (self.fs, self.fs), (255, 255, 255, 127)),
+                    (x0, y0),
+                )
                 c += 1
         return di
 
@@ -571,7 +599,12 @@ class ClueWWW(NamedTuple):
     room: Room | MasterRoom
 
 
-def limitCallsTo(limitedMethods: Iterable[str], option_var: str, option_gen: str, resetLogic: Tuple[str]):
+def limitCallsTo(
+    limitedMethods: Iterable[str],
+    option_var: str,
+    option_gen: str,
+    resetLogic: Tuple[str],
+):
     def srDecorator(cls):
         def srSenderDecorator(f):
             @wraps(f)
@@ -612,14 +645,27 @@ def limitCallsTo(limitedMethods: Iterable[str], option_var: str, option_gen: str
 
 
 @limitCallsTo(
-    limitedMethods=('start', 'roll', 'move', 'snoop', 'secret', 'suggest', 'accuse', 'endturn'),
+    limitedMethods=(
+        'start',
+        'roll',
+        'move',
+        'snoop',
+        'secret',
+        'suggest',
+        'accuse',
+        'endturn',
+    ),
     option_var='next_options',
     option_gen='_option_gen',
     resetLogic=('force_endturn', '_gameplay_options'),
 )
 class ClueGame:
     def __init__(self, suspect_type, weapon_type, room_type, board_type, die_count: int = 2) -> None:
-        self.suspect_type, self.weapon_type, self.room_type = suspect_type, weapon_type, room_type
+        self.suspect_type, self.weapon_type, self.room_type = (
+            suspect_type,
+            weapon_type,
+            room_type,
+        )
 
         self.suspects = copy.deepcopy(list(self.suspect_type))
         self.weapons = copy.deepcopy(list(self.weapon_type))
@@ -638,7 +684,10 @@ class ClueGame:
         self.board_type = board_type
 
     def start(
-        self, players: Dict[Suspect | MasterSuspect, Any], turn_order: str = 'standard', random_locs: bool = False
+        self,
+        players: Dict[Suspect | MasterSuspect, Any],
+        turn_order: str = 'standard',
+        random_locs: bool = False,
     ) -> bool:
         player_cards = list(itertools.chain(self.suspects, self.weapons, self.rooms))
         for ce in self.answer:
@@ -711,7 +760,7 @@ class ClueGame:
         afterverb = 'have' if verb == 'did' else 'in'
         if hint[2]:
             verb = verb.upper()
-        hint_str = f"{'The ' if hint_types[0] is Weapon else ''}{hint[0]} {verb}{' ' if hint[2] else ' NOT '}{afterverb} the {hint[1]}."
+        hint_str = f'{"The " if hint_types[0] is Weapon else ""}{hint[0]} {verb}{" " if hint[2] else " NOT "}{afterverb} the {hint[1]}.'
 
         for i in range(1, len(self.players)):
             u = set(suggestion) & set(self.players[i].cards)
@@ -808,7 +857,10 @@ class ClueGame:
                 m.append(Move(md, int(l)))
             return self.move, m
         elif action == 'suggest':
-            return self.suggest, (self.suspect_type[args[0].upper()], self.weapon_type[args[1].upper()])
+            return self.suggest, (
+                self.suspect_type[args[0].upper()],
+                self.weapon_type[args[1].upper()],
+            )
         elif action == 'accuse':
             return self.accuse, (
                 self.suspect_type[args[0].upper()],
@@ -850,12 +902,17 @@ class ClueGame:
                     # get in the case of wrong accusation removing player
                     while type(pos := self.board.player_positions.get(self.cur_player.suspect)) is tuple:
                         x, y = pos
+
+                        # 2025-09-11 - breaking out of this loop is needed even on >0 roll
+                        # this state of a correct accusal on partial-move snoop finally happened (Kev won!)
                         if self.board.board[x][y] == 'X':
                             yield ('snoop',)
                             if self.board.leftover_roll:
                                 choice = yield ('move', 'accuse')
                             else:
                                 choice = yield ('accuse', 'endturn')
+
+                            if choice != 'move':
                                 break
                         else:
                             break
@@ -890,7 +947,11 @@ def master_piece_image(s: MasterSuspect) -> Image:
     red, green, blue, alpha = data.T
 
     colored_areas = (alpha == 255) & ((red > 10) | (green > 10) | (blue > 10))
-    data[..., :-1][colored_areas.T] = (s.color >> 16, (s.color & 0x00FF00) >> 8, s.color & 0xFF)
+    data[..., :-1][colored_areas.T] = (
+        s.color >> 16,
+        (s.color & 0x00FF00) >> 8,
+        s.color & 0xFF,
+    )
 
     return Image.fromarray(data)
 
@@ -910,7 +971,10 @@ class MasterClueBoard(ClueBoard):
                 MasterRoom.KITCHEN: MasterRoom.LIBRARY,
                 (12, 14): (12, 37),
             },
-            entrance_exceptions=[(MasterRoom.KITCHEN, MoveDirection.UP), (MasterRoom.CONSERVATORY, MoveDirection.DOWN)],
+            entrance_exceptions=[
+                (MasterRoom.KITCHEN, MoveDirection.UP),
+                (MasterRoom.CONSERVATORY, MoveDirection.DOWN),
+            ],
             full_block=False,
             allow_combo_rolls=True,
         )

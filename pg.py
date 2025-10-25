@@ -13,14 +13,14 @@ from util2 import SI
 Range = NewType('Range', range)
 SeasonInterval = NewType('SeasonInterval', SI)
 
-CURRENT_SEASON = 53
+CURRENT_SEASON = 54
 
 
 @enum.unique
 class PG(enum.Enum):
     Accelerator = ('Accelerator', ((44,), (48,)), 'Acc')
     AddEmUp = ("Add 'em Up", ((15, 17),), 'Add', 'Addy', 'AEU')
-    AnyNumber = ('Any Number', ((1, SI.inf),), 'A#', 'Any' 'Any#')
+    AnyNumber = ('Any Number', ((1, SI.inf),), 'A#', 'AnyAny#')
     BackToXX = (
         "Back to '7X",
         ((50, SI.inf),),
@@ -35,33 +35,87 @@ class PG(enum.Enum):
     )
     BalanceGame84 = ("Balance Game '84", ((12, 14),), 'Balance84')
     BalanceGame = ('Balance Game', ((34, SI.inf),), 'Balance', 'Bal')
-    BargainGame = ('Bargain Game', ((8, 37), (40, SI.inf)), 'Bargain', "Barker's Bargain Bar", 'Barg', 'Bar', 'BBB')
+    BargainGame = (
+        'Bargain Game',
+        ((8, 37), (40, SI.inf)),
+        'Bargain',
+        "Barker's Bargain Bar",
+        'Barg',
+        'Bar',
+        'BBB',
+    )
     Bonkers = ('Bonkers', ((30, SI.inf),), 'Bonk', 'Bkrs')
     BonusGame = ('Bonus Game', ((1, SI.inf),), 'Bonus', 'Bnus')
-    BullseyeI = ('Bullseye I', ((1,),), 'BullseyeI', 'Bullseye72', 'Bull72', 'BullI', 'BullyI', 'BullsyI')
+    BullseyeI = (
+        'Bullseye I',
+        ((1,),),
+        'BullseyeI',
+        'Bullseye72',
+        'Bull72',
+        'BullI',
+        'BullyI',
+        'BullsyI',
+    )
     Bullseye = ('Bullseye', ((4, SI.inf),), 'Bullseye', 'Bull', 'Bully', 'Bullsy')
     Bump = ('Bump', ((14, 20),), 'Bumpy')
     BuyOrSell = ('Buy Or Sell', ((20, 36),), 'BoS', 'Buy', 'Sell')
     CardGame = ('Card Game', ((2, 40), (42, SI.inf)), 'New Card Game', 'Card', 'Cardy')
     CarPong = ('Car Pong', ((44,), (48,)), 'Pong', 'Pongy')
-    CheckGame = ('Check Game', ((10, 37), (41, SI.inf)), 'Blank Check', 'Check', 'Checky', 'Chec')
+    CheckGame = (
+        'Check Game',
+        ((10, 37), (41, SI.inf)),
+        'Blank Check',
+        'Check',
+        'Checky',
+        'Chec',
+        'Chck',
+    )
     CheckOut = ('Check-Out', ((10, SI.inf),), 'C-O', 'CO', 'Checkout', 'Out')
     ClearanceSale = ('Clearance Sale', ((27, 37),), 'Clearance', 'Sale', 'Saley')
-    Cliffhangers = ('Cliff Hangers', ((4, SI.inf),), 'Cliffhangers', 'Cliff', 'Cliffy', 'Clif')
+    Cliffhangers = (
+        'Cliff Hangers',
+        ((4, SI.inf),),
+        'Cliffhangers',
+        'Cliff',
+        'Cliffy',
+        'Clif',
+    )
     ClockGame = ('Clock Game', ((1, SI.inf),), 'Clock', 'Clocky', 'Cloc')
     ComingOrGoing = ('Coming or Going', ((32, SI.inf),), 'CoG', 'Coggy')
     CoverUp = ('Cover Up', ((22, SI.inf),), 'Cover', 'COVR', 'CU')
     CreditCard = ('Credit Card', ((16, 37),), 'Credit')
     DangerPrice = ('Danger Price', ((4, SI.inf),), 'Danger', 'Dngr')
-    DiceGame = ('Dice Game', ((4, SI.inf),), 'Deluxe Dice Game', 'Dice', 'Dicey', 'Deluxe')
+    DiceGame = (
+        'Dice Game',
+        ((4, SI.inf),),
+        'Deluxe Dice Game',
+        'Dice',
+        'Dicey',
+        'Deluxe',
+    )
     DoTheMath = ('Do the Math', ((42, SI.inf),), 'Math', 'DTM')
-    DoubleBullseye = ('Double Bullseye', ((1,),), 'DB', 'DBullseye', 'DBull', 'DBully', 'DBullsy')
+    DoubleBullseye = (
+        'Double Bullseye',
+        ((1,),),
+        'DB',
+        'DBullseye',
+        'DBull',
+        'DBully',
+        'DBullsy',
+    )
     DoubleCross = ('Double Cross', ((40, SI.inf),), 'Cross', 'Cros', 'DX')
     DoubleDigits = ('Double Digits', ((1,),), 'DD', 'Digits')
     DoublePrices = ('Double Prices', ((1, SI.inf),), 'DP', 'Double')
     EazyAz123 = ('Eazy az 1 2 3', ((24, SI.inf),), 'Eazy az 123', 'Eazy', 'Easy', '123')
     FinishLine = ('Finish Line', ((6, 7),), 'Finish')
-    FivePriceTags = ('5 Price Tags', ((1, SI.inf),), 'Five Price Tags', '5PT', 'FPT', 'Tags')
+    FivePriceTags = (
+        '5 Price Tags',
+        ((1, SI.inf),),
+        'Five Price Tags',
+        '5PT',
+        'FPT',
+        'Tags',
+    )
     FlipFlop = ('Flip Flop', ((28, SI.inf),), 'Flip', 'Flippy')
     FortuneHunter = ('Fortune Hunter', ((26, 28),), 'Fortune', 'Hunter')
     FreezeFrame = ('Freeze Frame', ((23, SI.inf),), 'Freeze', 'Freezy', 'Frze')
@@ -70,7 +124,16 @@ class PG(enum.Enum):
     GiveOrKeep = ('Give or Keep', ((1, 19),), 'GoK', 'Give', 'Keep')
     GoForASpin = ('Go For A Spin', ((44,), (48,)), 'Spin', 'Spinny')
     GoldRush = ('Gold Rush', ((44, 45), (48,)), 'Rush', 'Rushy')
-    GoldenRoad = ('Golden Road', ((3, SI.inf),), 'Gold', 'Road', 'Goldy', 'Roady', 'Golden', 'GR')
+    GoldenRoad = (
+        'Golden Road',
+        ((3, SI.inf),),
+        'Gold',
+        'Road',
+        'Goldy',
+        'Roady',
+        'Golden',
+        'GR',
+    )
     GrandGame = ('Grand Game', ((8, SI.inf),), 'Grand', 'Grandy', 'Grnd')
     Gridlock = ('Gridlock!', ((46, SI.inf),), 'Gridlock', 'Grid', 'Griddy')
     GroceryGame = ('Grocery Game', ((1, SI.inf),), 'Grocery', 'Groc')
@@ -83,14 +146,38 @@ class PG(enum.Enum):
     ItsInTheBag = ("It's in the Bag", ((26, SI.inf),), 'Bag', 'Baggy')
     ItsOptional = ("It's Optional", ((7, 11),), 'Option', 'Optional')
     Joker = ('Joker', ((22, 35),), 'Joke')
-    LetEmRoll = ("Let 'em Roll", ((28, SI.inf),), 'Let em Roll', 'Roll', 'Rolly')
+    LetEmRoll = ("Let 'em Roll", ((28, SI.inf),), 'Let em Roll', 'Roll', 'Rolly', 'Rol')
     LineEmUp = ('Line em Up', ((26, SI.inf),), 'Line', 'LEU')
-    LuckySeven = ('Lucky $even', ((1, SI.inf),), 'Lucky Seven', 'L7', 'Lucky', 'Seven', '$even', '7')
+    LuckySeven = (
+        'Lucky $even',
+        ((1, SI.inf),),
+        'Lucky Seven',
+        'L7',
+        'Lucky',
+        'Seven',
+        '$even',
+        '7',
+    )
     MagicNumber = ('Magic #', ((21, 50),), 'M#', 'Magic')
-    MakeYourMark = ('Make Your Mark', ((23, 37),), "Barker's Marker$", "Barker's Markers", 'Mark', 'Marky', 'Markers')
+    MakeYourMark = (
+        'Make Your Mark',
+        ((23, 37),),
+        "Barker's Marker$",
+        "Barker's Markers",
+        'Mark',
+        'Marky',
+        'Markers',
+    )
     MakeYourMove = ('Make Your Move', ((18, SI.inf),), 'Move', 'Movey', 'MYM')
     MasterKey = ('Master Key', ((11, SI.inf),), 'Key')
-    MoneyGame = ('Money Game', ((1, SI.inf),), 'Big Money Game', 'Money', 'Mony', 'BigMoney')
+    MoneyGame = (
+        'Money Game',
+        ((1, SI.inf),),
+        'Big Money Game',
+        'Money',
+        'Mony',
+        'BigMoney',
+    )
     MoreOrLess = ('More or Less', ((35, SI.inf),), 'MoL', 'Moley')
     MostExpensive = ('Most Expen$ive', ((1, SI.inf),), 'Most Expensive', 'ME')
     MysteryPrice = ('Mystery Price', ((2,),), 'Mystery')
@@ -99,13 +186,37 @@ class PG(enum.Enum):
     OnTheNose = ('On the Nose', ((13, 14),), 'Nose', 'Nosey')
     OnTheSpot = ('On the Spot', ((31, 33),), 'Spot', 'Spotty')
     OneRightPrice = ('1 Right Price', ((4, SI.inf),), 'ORP', '1RP')
-    OneRightPrice3 = ('ORP Three Furs', ((1,),), 'ORF', 'ORPF', '1RPF', 'ORP3', '1RP3', 'ORP3F', '1RP3F')
-    OneWrongPrice = (u'One Wr\u00f8ng Price', ((27, SI.inf),), '1 Wrong Price', 'OWP', '1WP')
+    OneRightPrice3 = (
+        'ORP Three Furs',
+        ((1,),),
+        'ORF',
+        'ORPF',
+        '1RPF',
+        'ORP3',
+        '1RP3',
+        'ORP3F',
+        '1RP3F',
+    )
+    OneWrongPrice = (
+        'One Wr\u00f8ng Price',
+        ((27, SI.inf),),
+        '1 Wrong Price',
+        'OWP',
+        '1WP',
+    )
     PassTheBuck = ('Pass the Buck', ((30, SI.inf),), 'Buck', 'PtB')
     Pathfinder = ('Pathfinder', ((15, SI.inf),), 'Path')
     PayTheRent = ('Pay the Rent', ((39, 51),), 'Rent', 'PtR')
     PennyAnte = ('Penny Ante', ((7, 30),), 'Penny79', 'PennyAnte', 'Ante')
-    PhoneHomeGame = ('Phone Home Game', ((12, 18),), 'Phone', 'Phoney', 'Home', 'Homey', 'Phg')
+    PhoneHomeGame = (
+        'Phone Home Game',
+        ((12, 18),),
+        'Phone',
+        'Phoney',
+        'Home',
+        'Homey',
+        'Phg',
+    )
     PickANumber = ('Pick-a-Number', ((20, SI.inf),), 'Pa#', 'PaN')
     PickAPair = (
         'Pick-a-Pair',
@@ -121,7 +232,7 @@ class PG(enum.Enum):
         'Pappy',
     )
     Plinko = ('Plinko', ((11, SI.inf),), 'Dinko', 'Plnk')
-    PocketChange = (u'Pocket \u00a2hange', ((33, SI.inf),), 'Pocket', 'Pckt')
+    PocketChange = ('Pocket \u00a2hange', ((33, SI.inf),), 'Pocket', 'Pckt')
     PokerGame = ('Poker Game', ((4, 35),), 'Poker')
     ProfessorPrice = ('Professor Price', ((6,),), 'Professor', 'Prof')
     PunchABunch = ('Punch a Bunch', ((7, SI.inf),), 'Punch', 'Punchy', 'Pnch', 'PAB')
@@ -135,11 +246,25 @@ class PG(enum.Enum):
     ShoppingSpree = ('Shopping Spree', ((24, SI.inf),), 'Spree', 'Spre')
     ShowerGame = ('Shower Game', ((7,),), 'Shower')
     SideBySide = ('Side by Side', ((22, SI.inf),), 'Side', 'Sidey', 'SbS')
-    SmashForCash = ('Smash for Ca$h', ((44,), (48,)), 'Smash For Cash', 'Smash', 'Smashy')
+    SmashForCash = (
+        'Smash for Ca$h',
+        ((44,), (48,)),
+        'Smash For Cash',
+        'Smash',
+        'Smashy',
+    )
     SpellingBee = ('Spelling Bee', ((17, SI.inf),), 'Bee')
     SplitDecision = ('Split Decision', ((24, 25),), 'Split', 'Splitty', 'Decision')
     SqueezePlay = ('Squeeze Play', ((6, SI.inf),), 'Squeeze', 'Squeezy', 'Sqze')
-    StackTheDeck = ('Stack the Deck', ((35, SI.inf),), 'Stack', 'Stacky', 'Deck', 'Stac', 'STD')
+    StackTheDeck = (
+        'Stack the Deck',
+        ((35, SI.inf),),
+        'Stack',
+        'Stacky',
+        'Deck',
+        'Stac',
+        'STD',
+    )
     StepUp = ('Step Up', ((30, 43),), 'Step', 'Steppy')
     SuperBall = ('Super Ball!!', ((9, 26),), 'SuperBall!!', 'SuperBall', 'Ball', 'SB')
     SuperSaver = ('$uper $aver', ((17, 24),), 'Super Saver', 'Saver', 'Savery')
@@ -151,13 +276,29 @@ class PG(enum.Enum):
     Temptation = ('Temptation', ((1, SI.inf),), 'Temptation', 'Tempt', 'Tempty', 'TMPT')
     TenChances = ('10 Chances', ((3, SI.inf),), 'Ten Chances', '10C')
     ThatsTooMuch = ("That's Too Much!", ((29, SI.inf),), 'TTM')
+    TheLionsShare = (
+        "The Lion's Share",
+        ((54, SI.inf),),
+        "Lion's Share",
+        'Lion',
+        'Liony',
+        'Share',
+        'Sharey',
+    )
     ThreeStrikes = ('3 Strikes', ((4, SI.inf),), '3 Strikes +', 'Strikes', '3X', '3X+')
     TimeIsMoney03 = ("Time Is Money '03", ((32,),), 'Time Is Money', 'Time03', 'TiM03')
     TimeIsMoney = ('Time I$ M\u00f8ney', ((43, SI.inf),), 'Time', 'TiM')
-    ToThePenny = ("To The Penny", ((50, SI.inf),), 'Penny', 'Peny', 'TTP')
+    ToThePenny = ('To The Penny', ((50, SI.inf),), 'Penny', 'Peny', 'TTP')
     TraderBob = ('Trader Bob', ((8, 14),), 'Trader', 'Trade', 'Tradey')
     TriplePlay = ('Triple Play', ((29, SI.inf),), 'Triple', 'TP')
-    TwoForThePriceOfOne = ('2 for the Price of 1', ((18, SI.inf),), '241', '2for1', 'twoforone', 'twofor1')
+    TwoForThePriceOfOne = (
+        '2 for the Price of 1',
+        ((18, SI.inf),),
+        '241',
+        '2for1',
+        'twoforone',
+        'twofor1',
+    )
     VendOPrice = ('Vend-O-Price', ((44, SI.inf),), 'Vend', 'Vendy')
     WalkOfFame = ('Walk of Fame', ((12, 14),), 'Walk', 'Walky', 'Fame', 'Famey', 'WOF')
     _UNKNOWN = ('??????????', tuple(), 'UNKNOWN')
@@ -270,16 +411,34 @@ _build_table_entry(
 _build_table_entry(
     'SP/CASH',
     ('cash/sp', 'sp/cash', 'cash&sp', 'sp&cash', 'spcash', 'cashsp'),
-    frozenset((PG.HalfOff, PG.HotSeat, PG.Plinko, PG.PunchABunch)),
+    frozenset((PG.HalfOff, PG.HotSeat, PG.Plinko, PG.PunchABunch, PG.TheLionsShare)),
 )
 _build_table_entry(
     'GP/CASH',
     ('cash/gp', 'gp/cash', 'cash&gp', 'gp&cash', 'gpcash', 'cashgp'),
-    frozenset((PG.GrandGame, PG.ItsInTheBag, PG.PayTheRent, PG.PhoneHomeGame, PG.TimeIsMoney, PG.ToThePenny)),
+    frozenset(
+        (
+            PG.GrandGame,
+            PG.ItsInTheBag,
+            PG.PayTheRent,
+            PG.PhoneHomeGame,
+            PG.TimeIsMoney,
+            PG.ToThePenny,
+        )
+    ),
 )
 _build_table_entry(
     'REG. SP',
-    ('sp/reg', 'sp/regular', 'regular/sp', 'reg/sp', 'regularsp', 'spregular', 'regsp', 'spreg'),
+    (
+        'sp/reg',
+        'sp/regular',
+        'regular/sp',
+        'reg/sp',
+        'regularsp',
+        'spregular',
+        'regsp',
+        'spreg',
+    ),
     frozenset(
         (
             PG.BackToXX,
@@ -304,7 +463,16 @@ _build_table_entry(
 )
 _build_table_entry(
     'REG. GP',
-    ('gp/reg', 'gp/regular', 'regular/gp', 'reg/gp', 'regulargp', 'gpregular', 'reggp', 'gpreg'),
+    (
+        'gp/reg',
+        'gp/regular',
+        'regular/gp',
+        'reg/gp',
+        'regulargp',
+        'gpregular',
+        'reggp',
+        'gpreg',
+    ),
     frozenset(
         (
             PG.Bullseye,
@@ -396,7 +564,9 @@ _build_table_entry(
     frozenset((PG.ClockGame, PG.MakeYourMove, PG.SafeCrackers, PG.TwoForThePriceOfOne)),
 )
 _build_table_entry(
-    '4 PRIZER', ('4p', '4prize', '4prizer'), PG.partition_table['4+ PRIZER'] - frozenset((PG.CreditCard, PG.FortuneHunter))
+    '4 PRIZER',
+    ('4p', '4prize', '4prizer'),
+    PG.partition_table['4+ PRIZER'] - frozenset((PG.CreditCard, PG.FortuneHunter)),
 )
 _build_table_entry(
     '3 PRIZER',
@@ -416,7 +586,17 @@ _build_table_entry(
 _build_table_entry(
     '2 PRIZER',
     ('2p', '2prize', '2prizer'),
-    frozenset((PG.BargainGame, PG.Bump, PG.DoTheMath, PG.DoubleCross, PG.MagicNumber, PG.OneRightPrice, PG.Switch)),
+    frozenset(
+        (
+            PG.BargainGame,
+            PG.Bump,
+            PG.DoTheMath,
+            PG.DoubleCross,
+            PG.MagicNumber,
+            PG.OneRightPrice,
+            PG.Switch,
+        )
+    ),
 )
 _build_table_entry(
     'MULTIPRIZER',
@@ -466,13 +646,24 @@ _build_table_entry(
     PG.partition_table['SP/CASH'] | PG.partition_table['GP/CASH'] | frozenset((PG.FortuneHunter,)),
 )
 _build_table_entry(
-    'FEE', ('fee', 'allfee', 'feeall', 'fee/all', 'all/fee'), PG.partition_table['SP'] | PG.partition_table['GP']
+    'FEE',
+    ('fee', 'allfee', 'feeall', 'fee/all', 'all/fee'),
+    PG.partition_table['SP'] | PG.partition_table['GP'],
 )
 _build_table_entry(
     'NON-CAR',
     ('non-car', 'noncar'),
     (PG.partition_table['FEE'] | PG.partition_table['1 PRIZER'] | PG.partition_table['1+ PRIZER'])
-    - frozenset((PG.Bonkers, PG.CheckGame, PG.FlipFlop, PG.SideBySide, PG.ComingOrGoing, PG.MakeYourMove)),
+    - frozenset(
+        (
+            PG.Bonkers,
+            PG.CheckGame,
+            PG.FlipFlop,
+            PG.SideBySide,
+            PG.ComingOrGoing,
+            PG.MakeYourMove,
+        )
+    ),
 )
 _build_table_entry(
     'NON-FEE',
@@ -480,12 +671,20 @@ _build_table_entry(
     PG.partition_table['any game'] - PG.partition_table['FEE'],
 )
 _build_table_entry(
-    'CAR/FEE', ('carfee', 'feecar', 'car/fee', 'fee/car'), PG.partition_table['SP/CAR'] | PG.partition_table['GP/CAR']
+    'CAR/FEE',
+    ('carfee', 'feecar', 'car/fee', 'fee/car'),
+    PG.partition_table['SP/CAR'] | PG.partition_table['GP/CAR'],
 )
 _build_table_entry(
-    'REG/FEE', ('regfee', 'feereg', 'reg/fee', 'fee/reg'), PG.partition_table['REG. SP'] | PG.partition_table['REG. GP']
+    'REG/FEE',
+    ('regfee', 'feereg', 'reg/fee', 'fee/reg'),
+    PG.partition_table['REG. SP'] | PG.partition_table['REG. GP'],
 )
-_build_table_entry('BIG3', ('big3', 'bigthree'), frozenset((PG.GoldenRoad, PG.ThreeStrikes, PG.TriplePlay)))
+_build_table_entry(
+    'BIG3',
+    ('big3', 'bigthree'),
+    frozenset((PG.GoldenRoad, PG.ThreeStrikes, PG.TriplePlay)),
+)
 _build_table_entry(
     'DEAL',
     ('lmad', 'deal', 'letsmakeadeal'),
@@ -497,7 +696,9 @@ _build_table_entry(
     frozenset([pg for pg in list(PG) if pg.retired and not pg.activeSeasons.empty and pg not in PG.partition_table['DEAL']]),
 )
 _build_table_entry(
-    'ACTIVE', ('active',), PG.partition_table['any game'] - PG.partition_table['RETIRED'] - PG.partition_table['DEAL']
+    'ACTIVE',
+    ('active',),
+    PG.partition_table['any game'] - PG.partition_table['RETIRED'] - PG.partition_table['DEAL'],
 )
 
 _build_table_entry(
@@ -524,21 +725,37 @@ _build_table_entry(
     'HOMEBASE',
     ('homebase', 'nowhere'),
     _pg_strs_convert(
-        'balance84 balance bonkers pong cliff cross finish gas gold spin grid hit hole hot hurdles optional roll line l7 spot buck path ante phone plinko poker rat shower stack superball telephone temptation 10c ttm 3x time03 tp'
+        'balance84 balance bonkers pong cliff cross finish gas gold spin grid hit hole hot hurdles optional roll line l7 spot buck path ante phone plinko poker rat shower stack superball telephone temptation 10c ttm 3x time03 tp lion'
     ),
 )
 _build_table_entry('MIDDLE', ('middle',), _pg_strs_convert('range nose'))
 _build_table_entry(
     'NO_OPENING_ACT',
-    (),
-    _pg_strs_convert('cross hole buck seat grid mol race t2 time rat path stack balance check magic line grid key'),
+    ('no_opening_act',),
+    _pg_strs_convert('cross hole buck seat grid mol race t2 time rat path stack balance check magic line grid key lion'),
 )
-_build_table_entry('NO_FIRST', (), _pg_strs_convert('gas 10c time03 trader spot card'))
-_build_table_entry('BAILOUT', ('bailout',), _pg_strs_convert('gas bag buck rent seat bee tempt step penny punch roll'))
-_build_table_entry('TIMED', ('timed',), _pg_strs_convert('split time03 time bonkers seat clock race roo'))
+_build_table_entry('NO_FIRST', ('no_first',), _pg_strs_convert('gas 10c time03 trader spot card'))
+_build_table_entry(
+    'BAILOUT',
+    ('bailout',),
+    _pg_strs_convert('gas bag buck rent seat bee tempt step penny punch roll lion'),
+)
+_build_table_entry(
+    'TIMED',
+    ('timed',),
+    _pg_strs_convert('split time03 time bonkers seat clock race roo lion'),
+)
 
 PG.partition_table['CAR_BOATABLE'] = frozenset(
-    (PG.MoneyGame, PG.GoldenRoad, PG.BullseyeI, PG.DoubleBullseye, PG.AnyNumber, PG.FivePriceTags, PG.LuckySeven)
+    (
+        PG.MoneyGame,
+        PG.GoldenRoad,
+        PG.BullseyeI,
+        PG.DoubleBullseye,
+        PG.AnyNumber,
+        PG.FivePriceTags,
+        PG.LuckySeven,
+    )
 )
 
 PG.CAR_BOATABLE_STRS = {str(pg) for pg in PG.partition_table['CAR_BOATABLE']}

@@ -1,6 +1,6 @@
 dropbox
 requests
-requests_html
+httpx_html
 lxml_html_clean
 discord.py
 sortedcontainers

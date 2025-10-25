@@ -5,19 +5,16 @@
 # wayo-py-python/bin/pip install -r wayo-py/requirements.txt --upgrade
 
 import asyncio
-import io
-import itertools
 import re
-import signal
 import sys
 import logging
 import traceback
+from datetime import *
 
-import aiohttp
 import discord
+from discord.ext import commands
 
 # import discord.opus
-from discord.ext import commands
 
 # try:
 #     import uvloop
@@ -26,14 +23,18 @@ from discord.ext import commands
 #     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 # except ImportError:
 #     pass
-from datetime import *
 
 import polars as pl
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from requests_html import AsyncHTMLSession
+import httpx_html
 
 from dropboxwayo import dropboxwayo
-from secretswayo import WAYO_PY_TOKEN, PASTEBIN_TOKEN, PASTEBIN_PW
+from secretswayo import (
+    WAYO_PY_TOKEN,
+    PASTEBIN_API_USER_KEY,
+    PASTEBIN_TOKEN,
+    PASTEBIN_PW,
+)
 from util import SCHEDULER_TZ
 
 # https://discord.com/api/oauth2/authorize?client_id=280172398974730250&permissions=0&scope=applications.commands%20bot
@@ -65,7 +66,7 @@ class WayoPyBot(commands.Bot):
             'cog_compendium',
             'cog_lineup',
         )
-        self.pastebin_key = None
+        self.pastebin_key = None if DEBUG else PASTEBIN_API_USER_KEY
 
     async def on_ready(self):
         if self.ready:
@@ -95,8 +96,15 @@ class WayoPyBot(commands.Bot):
         self.ready = True
 
     async def setup_hook(self):
-        self.session = aiohttp.ClientSession()
-        self.asession = AsyncHTMLSession()
+        # 2025-05-29 - HTTP 406 came back (only used for compendium downloading),
+        # even on debug side. Switched to a new library and took the opportunity
+        # to merge all bot web scraping into one.
+        self.asession = httpx_html.AsyncHTMLSession()  # verify=False is a potential future quick fix
+
+        r = await self.asession.get('https://www.eyeoncbs.com/getFile/182768')
+        _log.debug(r.status_code)
+        _log.debug(r.headers)
+
         self.SCHEDULER = AsyncIOScheduler(timezone=SCHEDULER_TZ)
         self.SCHEDULER.start()
 
@@ -110,10 +118,15 @@ class WayoPyBot(commands.Bot):
             #         pass
 
             # _log.info('timed_quit set up')
-            await self.login_pastebin()
+
+            # 2025-05-29 - huh, I don't need to login anymore, or never did consistently
+            if not self.pastebin_key:
+                await self.login_pastebin()
+            else:
+                _log.info('using cached pastebin user key.')
         else:
             self.loop.set_debug(True)
-            _log.info('Local debug is on instead of pastebin.')
+            _log.debug('Local debug is on instead of pastebin.')
 
         for ext in self.initial_extensions:
             await self.load_extension(ext)
@@ -133,13 +146,14 @@ class WayoPyBot(commands.Bot):
             'api_user_password': PASTEBIN_PW,
         }
 
-        login = await self.session.post("https://pastebin.com/api/api_login.php", data=login_data)
-        if login.status == 200:
-            self.pastebin_key = await login.text()
-            _log.info(f"Got pastebin token as: {self.pastebin_key}")
+        login = await self.asession.post('https://pastebin.com/api/api_login.php', data=login_data)
+        if login.status_code == 200:
+            self.pastebin_key = login.text
+            _log.info(f'Got pastebin user key as: {self.pastebin_key}')
         else:
             self.pastebin_key = None
-            _log.info(f"Failed to get pastebin token. login status was: {login.status}")
+            _log.info(f'Failed to get pastebin user key. login status was: {login.status_code}')
+            _log.info(login.text)
 
     async def do_pastebin(self, txt, fn):
         if self.pastebin_key:
@@ -153,13 +167,13 @@ class WayoPyBot(commands.Bot):
                 'api_user_key': self.pastebin_key,
                 'api_folder_key': 'pR23GEqX',
             }
-            r = await self.session.post("https://pastebin.com/api/api_post.php", data=data)
-            if r.status == 200:
-                link = await r.text()
+            r = await self.asession.post('https://pastebin.com/api/api_post.php', data=data)
+            if r.status_code == 200:
+                link = r.text
                 slash_idx = link.rfind('/')
                 return link[:slash_idx] + '/raw' + link[slash_idx:]
             else:
-                return None
+                _log.info(r.status_code, r.content)
         else:
             return None
 
@@ -201,7 +215,7 @@ class WayoPyBot(commands.Bot):
                         prefixes = await self.get_prefix(ctx.message)
                         if type(prefixes) is str:
                             prefixes = [prefixes]
-                        if any(re.fullmatch(fr'\{p}+', com) for p in prefixes):
+                        if any(re.fullmatch(rf'\{p}+', com) for p in prefixes):
                             return
                         else:
                             q = self.sub_dict.get(com)
@@ -210,7 +224,10 @@ class WayoPyBot(commands.Bot):
                         extra = ''
                     await ctx.send(f'{error}.{extra}')
                 else:
-                    _log.info(f'\tStandard commands.CommandError, {error.__class__.__name__}: {error}', file=sys.stderr)
+                    _log.info(
+                        f'\tStandard commands.CommandError, {error.__class__.__name__}: {error}',
+                        file=sys.stderr,
+                    )
 
     async def close(self):
         try:
@@ -218,7 +235,6 @@ class WayoPyBot(commands.Bot):
         except:
             pass
         await super().close()
-        await self.session.close()
         await self.asession.close()
         self.SCHEDULER.shutdown(wait=False)
         for t in asyncio.all_tasks(self.loop):
@@ -240,11 +256,22 @@ async def ready_time(ctx):
     await ctx.send(f'{ctx.bot.ready_time:%m/%d/%y %I:%M:%S %p}')
 
 
-# @WB.command(hidden=True)
-# async def reset_time(ctx):
-#     await ctx.send(
-#         f'{ctx.bot.ready_time + timedelta(days=1):%m/%d/%y %I:%M:%S %p} to {ctx.bot.ready_time + timedelta(days=1, minutes=216):%m/%d/%y %I:%M:%S %p}'
-#     )
+@WB.command(hidden=True)
+@commands.is_owner()
+@commands.dm_only()
+async def delete_messages_after(ctx, message: commands.MessageConverter):
+    await ctx.message.add_reaction('🚧')
+    try:
+        messages = [mes async for mes in message.channel.history(after=message)]
+        for m in messages:
+            await m.delete()
+            await asyncio.sleep(2)
+        await ctx.message.add_reaction('✅')
+    except Exception as e:
+        await ctx.message.add_reaction('❌')
+        await ctx.message.send(f'`{e}`')
+    finally:
+        await ctx.message.remove_reaction('🚧', ctx.bot.user)
 
 
 @WB.command(hidden=True)
@@ -270,7 +297,7 @@ async def reload_ext(ctx, cog):
 
 import random
 
-_PATTERNS = ["✉️", '✅', "🔷"]
+_PATTERNS = ['✉️', '✅', '🔷']
 
 
 @WB.command(aliases=['cp', 'cgp', 'greco_pattern'], hidden=True)
@@ -286,7 +313,11 @@ from typing import Literal, Optional
 @WB.command(hidden=True)
 @commands.is_owner()
 @commands.dm_only()
-async def sync(ctx, guilds: commands.Greedy[commands.GuildConverter], spec: Optional[Literal["~", "~~"]] = None) -> None:
+async def sync(
+    ctx,
+    guilds: commands.Greedy[commands.GuildConverter],
+    spec: Optional[Literal['~', '~~']] = None,
+) -> None:
     if not guilds:
         if spec:
             if spec == '~~':
@@ -296,7 +327,7 @@ async def sync(ctx, guilds: commands.Greedy[commands.GuildConverter], spec: Opti
             fmt = await ctx.bot.tree.sync()
 
         await ctx.send(
-            f"Synced commands in the tree {'globally' if spec is None else 'to the current guild' + (' (global copied)' if spec == '~~' else '') + '.'}"
+            f'Synced commands in the tree {"globally" if spec is None else "to the current guild" + (" (global copied)" if spec == "~~" else "") + "."}'
         )
         return
 
@@ -305,9 +336,9 @@ async def sync(ctx, guilds: commands.Greedy[commands.GuildConverter], spec: Opti
     for guild in guilds:
         try:
             fmt = await ctx.bot.tree.sync(guild=guild)
-            await ctx.send(f"Synced commands in the tree to {guild.name}.")
+            await ctx.send(f'Synced commands in the tree to {guild.name}.')
         except discord.HTTPException:
-            await ctx.send(f"Failed to sync tree to {guild.name}.")
+            await ctx.send(f'Failed to sync tree to {guild.name}.')
             # pass
         # else:
         # fmt += 1
@@ -333,15 +364,16 @@ if __name__ == '__main__':
     # if sys.platform.startswith('linux') and datetime.now(tz=pytz.timezone('US/Eastern')).weekday() > 4:
     # quit()
 
-    # https://stackoverflow.com/questions/27981545/suppress-insecurerequestwarning-unverified-https-request-is-being-made-in-pytho
-    import urllib3, bs4
+    if not DEBUG:
+        # https://stackoverflow.com/questions/27981545/suppress-insecurerequestwarning-unverified-https-request-is-being-made-in-pytho
+        import urllib3, bs4
 
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    import warnings
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        import warnings
 
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", category=RuntimeWarning)
-    warnings.filterwarnings("ignore", category=bs4.XMLParsedAsHTMLWarning)
+        warnings.filterwarnings('ignore', category=DeprecationWarning)
+        warnings.filterwarnings('ignore', category=RuntimeWarning)
+        warnings.filterwarnings('ignore', category=bs4.XMLParsedAsHTMLWarning)
 
     # logging
     # logger = logging.getLogger('wayo_log')

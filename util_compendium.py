@@ -11,7 +11,6 @@ from humanize import ordinal
 from more_itertools import value_chain
 import polars as pl
 import polars.selectors as cs
-from requests_html import AsyncHTMLSession, HTMLSession
 
 from dropboxwayo import dropboxwayo
 from util_expr import (
@@ -41,8 +40,8 @@ def _extract_trs(tables, *idxs):
 
 
 class CompendiumDownloader:
-    def __init__(self, asession: AsyncHTMLSession = None):
-        self.asession = asession or AsyncHTMLSession()
+    def __init__(self, asession):
+        self.asession = asession
 
     async def _get_tables(self, page_suffix: int | str):
         page = await self.asession.get(f'https://buyavowel.boards.net/page/compendium{page_suffix}')
@@ -71,12 +70,20 @@ class CompendiumDownloader:
                 # double duty
                 trs = _extract_trs(tables, 1)
                 ss = self._dl_choices(trs, True)
-                await asyncio.to_thread(dropboxwayo.upload, ss, f'/heroku/wayo-py/compendium/choicesprimetime.csv')
+                await asyncio.to_thread(
+                    dropboxwayo.upload,
+                    ss,
+                    f'/heroku/wayo-py/compendium/choicesprimetime.csv',
+                )
 
                 # triple duty
                 trs = _extract_trs(tables, 3)
                 ss = self._dl_sched(trs, True)
-                await asyncio.to_thread(dropboxwayo.upload, ss, f'/heroku/wayo-py/compendium/schedprimetime.csv')
+                await asyncio.to_thread(
+                    dropboxwayo.upload,
+                    ss,
+                    f'/heroku/wayo-py/compendium/schedprimetime.csv',
+                )
             case 'kids':
                 trs = _extract_trs(tables, 0)
                 s = self._dl_kids(trs)
@@ -148,7 +155,18 @@ class CompendiumDownloader:
                     else:
                         answer = ''
 
-                    f.writerow([date_, showno, uncertain, round_, round_extra, puzzle, category.upper(), answer.upper()])
+                    f.writerow(
+                        [
+                            date_,
+                            showno,
+                            uncertain,
+                            round_,
+                            round_extra,
+                            puzzle,
+                            category.upper(),
+                            answer.upper(),
+                        ]
+                    )
                 elif (tdt := [td.text for td in r]) != _HEADER_ROW:
                     raise ValueError(f'Row not parseable for syndicated S{season}: {tdt}')
 
@@ -184,7 +202,18 @@ class CompendiumDownloader:
                     else:
                         answer = ''
 
-                    f.writerow([date_, showno, hh, round_, round_extra, puzzle, category.upper(), answer.upper()])
+                    f.writerow(
+                        [
+                            date_,
+                            showno,
+                            hh,
+                            round_,
+                            round_extra,
+                            puzzle,
+                            category.upper(),
+                            answer.upper(),
+                        ]
+                    )
                 # elif (tdt := [td.text for td in r]) != _HEADER_ROW:
                 # raise ValueError(f'Row not parseable for {s_str}: {tdt}')
 
@@ -265,7 +294,15 @@ class CompendiumDownloader:
                     answer = answer[1:-1]  # no ()
                 else:
                     answer = ''
-                f.writerow([date_used, when_used.replace('^', ''), puzzle, category.upper(), answer.upper()])
+                f.writerow(
+                    [
+                        date_used,
+                        when_used.replace('^', ''),
+                        puzzle,
+                        category.upper(),
+                        answer.upper(),
+                    ]
+                )
 
             return s.getvalue().encode()
 
@@ -326,7 +363,11 @@ COL_NAME_REMAPPING = {
     'T': 'THEME',
 }
 
-_letters_mapping = {'CONSONANT': 'BCDFGHJKLMNPQRSTVWXYZ', 'ALL': string.ascii_uppercase}
+_letters_mapping = {
+    'CONSONANT': 'BCDFGHJKLMNPQRSTVWXYZ',
+    'ALL': string.ascii_uppercase,
+    'VOWEL': 'AEIOU',
+}
 _word_regex = r"\b[A-Z-'\.]+\b"
 
 
@@ -364,7 +405,10 @@ def build_puzzle_search_expr(options):
 
                 f = (pl.col(col) != '') & (~(pl.col('CATEGORY') == 'CROSSWORD'))
                 cd = 'has a bonus'
-            case ['BONUS' | 'B' as col, '1' | '0' | 'YES' | 'NO' | 'Y' | 'N' | 'T' | 'F' | 'TRUE' | 'FALSE' as b]:
+            case [
+                'BONUS' | 'B' as col,
+                '1' | '0' | 'YES' | 'NO' | 'Y' | 'N' | 'T' | 'F' | 'TRUE' | 'FALSE' as b,
+            ]:
                 if options.time in ('primetime', 'kids', 'gb'):
                     raise ValueError(f'BONUS is invalid in {options.time}.')
 
@@ -404,7 +448,11 @@ def build_puzzle_search_expr(options):
                 else:
                     f = pl.col(col).cast(str) == lit
                     cd = f'{col} is exactly "{lit}"'
-            case ['PUZZLE' | 'P' | 'CLUE/BONUS' | 'CLUE' | 'BONUS' | 'CB' | 'B' as col, regex, *e]:
+            case [
+                'PUZZLE' | 'P' | 'CLUE/BONUS' | 'CLUE' | 'BONUS' | 'CB' | 'B' as col,
+                regex,
+                *e,
+            ]:
                 col = COL_NAME_REMAPPING.get(col, col)
                 if col == 'CLUE/BONUS':
                     if options.time in ('primetime', 'kids', 'gb'):
@@ -469,7 +517,10 @@ def build_puzzle_search_expr(options):
                 f, cd, _ = build_int_expression(pl.col('PUZZLE').str.extract_all('[A-Z]').list.len(), e)
                 cd = f'length is {cd}'
             case ['LENGTH_UNIQUE' | 'LCU' | 'LU', *e]:
-                f, cd, _ = build_int_expression(pl.col('PUZZLE').str.extract_all('[A-Z]').list.unique().list.len(), e)
+                f, cd, _ = build_int_expression(
+                    pl.col('PUZZLE').str.extract_all('[A-Z]').list.unique().list.len(),
+                    e,
+                )
                 cd = f'total number of unique letters is {cd}'
             case ['COUNT' | 'C' | 'COUNT_UNIQUE' | 'CU' as col, letters, *e]:
                 if letters in _letters_mapping:
@@ -526,7 +577,12 @@ def build_puzzle_search_expr(options):
 
                 f = pl.col('PUZZLE').str.extract_all(_word_regex).list.get(idx).str.contains(regex)
                 cd = f'{sub_cd} word matches "{regex}"'
-            case ['WORD' | 'W', word, 'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as w_q, idx]:
+            case [
+                'WORD' | 'W',
+                word,
+                'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as w_q,
+                idx,
+            ]:
                 idx, sub_cd = _ordinal_adjust(int(idx))
 
                 base_expr = pl.col('PUZZLE').str.extract_all(_word_regex).list.get(idx)
@@ -546,7 +602,7 @@ def build_puzzle_search_expr(options):
                 try:
                     _, mult_cd, _ = build_int_expression(pl.col('DUMMY'), [mults], mult_hybrid=True)
                 except KeyError:
-                    raise ValueError('All multiples must be between 1 (single) and 12 (dodecuple).')
+                    raise ValueError('All multiples must be between 1 (single) and 15 (quindecuple).')
 
                 if not e:
                     e = ['>=1']
@@ -555,7 +611,13 @@ def build_puzzle_search_expr(options):
                     pl.col('_lc')
                     .list.eval(
                         (pl.element().struct.field('').is_in(list(letters)))
-                        & (build_int_expression(pl.element().struct.field('count'), [mults], expr_only=True)),
+                        & (
+                            build_int_expression(
+                                pl.element().struct.field('count'),
+                                [mults],
+                                expr_only=True,
+                            )
+                        ),
                         parallel=True,
                     )
                     .list.sum(),
@@ -674,7 +736,10 @@ def build_choices_search_expr(options):
                 else:
                     f = pl.col(col).str.contains(regex)
                     cd = f'{col} matches "{regex}"'
-            case ['CHOSEN' | 'CHOICE1' | 'C1' | 'CHOICE2' | 'C2' | 'CHOICE3' | 'C3' as col, regex]:
+            case [
+                'CHOSEN' | 'CHOICE1' | 'C1' | 'CHOICE2' | 'C2' | 'CHOICE3' | 'C3' as col,
+                regex,
+            ]:
                 col = COL_NAME_REMAPPING.get(col, col)
                 regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
                 f = pl.col(col).cast(str).str.contains(regex)
@@ -683,14 +748,14 @@ def build_choices_search_expr(options):
                 cd = f'{col} matches "{regex}"'
             case ['C' | 'CHOICE', regex]:
                 regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
-                f = pl.any_horizontal(cs.matches('^CHOICE\d$').cast(str).str.contains(regex))
+                f = pl.any_horizontal(cs.matches(r'^CHOICE\d$').cast(str).str.contains(regex))
                 cd = f'any CHOICE matches "{regex}"'
             case ['C' | 'CHOICE', lit, 'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as p_q]:
                 if p_q.startswith('L'):
-                    f = pl.any_horizontal(cs.matches('^CHOICE\d$').cast(str).str.contains(lit, literal=True))
+                    f = pl.any_horizontal(cs.matches(r'^CHOICE\d$').cast(str).str.contains(lit, literal=True))
                     verb = 'contains'
                 else:
-                    f = pl.any_horizontal(cs.matches('^CHOICE\d$') == lit)
+                    f = pl.any_horizontal(cs.matches(r'^CHOICE\d$') == lit)
                     verb = 'is exactly'
                 if re.match('[123]', col[-1]):
                     col = ordinal(col[-1]) + ' CHOICE'
@@ -698,7 +763,7 @@ def build_choices_search_expr(options):
             case ['UC' | 'UNCHOSEN' | 'NC' | 'NOTCHOSEN' | 'NOT_CHOSEN', regex]:
                 regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
                 f = pl.all_horizontal(
-                    pl.any_horizontal(cs.matches('^CHOICE\d$').cast(str).str.contains(regex)),
+                    pl.any_horizontal(cs.matches(r'^CHOICE\d$').cast(str).str.contains(regex)),
                     (~pl.col('CHOSEN').cast(str).str.contains(regex)),
                 )
                 cd = f'any CHOICE matches "{regex}" but CHOSEN does not match "{regex}"'
@@ -709,13 +774,16 @@ def build_choices_search_expr(options):
             ]:
                 if p_q.startswith('L'):
                     f = pl.all_horizontal(
-                        pl.any_horizontal(cs.matches('^CHOICE\d$').cast(str).str.contains(lit, literal=True)),
+                        pl.any_horizontal(cs.matches(r'^CHOICE\d$').cast(str).str.contains(lit, literal=True)),
                         (~pl.col('CHOSEN').cast(str).str.contains(lit, literal=True)),
                     )
                     verb = 'contains'
                     verb2 = 'does not contain'
                 else:
-                    f = pl.all_horizontal(pl.any_horizontal(cs.matches('^CHOICE\d$') == lit), pl.col('CHOSEN') != lit)
+                    f = pl.all_horizontal(
+                        pl.any_horizontal(cs.matches(r'^CHOICE\d$') == lit),
+                        pl.col('CHOSEN') != lit,
+                    )
                     verb = 'is exactly'
                     verb2 = 'is not exactly'
                 if re.match('[123]', col[-1]):
@@ -751,7 +819,10 @@ def build_choices_search_expr(options):
                 f, cd, _ = build_int_expression(pl.col('PUZZLE').str.extract_all('[A-Z]').list.len(), e)
                 cd = f'length is {cd}'
             case ['LENGTH_UNIQUE' | 'LCU' | 'LU', *e]:
-                f, cd, _ = build_int_expression(pl.col('PUZZLE').str.extract_all('[A-Z]').list.unique().list.len(), e)
+                f, cd, _ = build_int_expression(
+                    pl.col('PUZZLE').str.extract_all('[A-Z]').list.unique().list.len(),
+                    e,
+                )
                 cd = f'total number of unique letters is {cd}'
             case ['COUNT' | 'C' | 'COUNT_UNIQUE' | 'CU' as col, letters, *e]:
                 if letters in _letters_mapping:
@@ -808,7 +879,12 @@ def build_choices_search_expr(options):
 
                 f = pl.col('PUZZLE').str.extract_all(_word_regex).list.get(idx).str.contains(regex)
                 cd = f'{sub_cd} word matches "{regex}"'
-            case ['WORD' | 'W', word, 'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as w_q, idx]:
+            case [
+                'WORD' | 'W',
+                word,
+                'LITERAL' | 'LIT' | 'L' | 'EXACT' | 'E' as w_q,
+                idx,
+            ]:
                 idx, sub_cd = _ordinal_adjust(int(idx))
 
                 base_expr = pl.col('PUZZLE').str.extract_all(_word_regex).list.get(idx)
@@ -828,7 +904,7 @@ def build_choices_search_expr(options):
                 try:
                     _, mult_cd, _ = build_int_expression(pl.col('DUMMY'), [mults], mult_hybrid=True)
                 except KeyError:
-                    raise ValueError('All multiples must be between 1 (single) and 12 (dodecuple).')
+                    raise ValueError('All multiples must be between 1 (single) and 12 (duodecuple).')
 
                 if not e:
                     e = ['>=1']
@@ -837,7 +913,13 @@ def build_choices_search_expr(options):
                     pl.col('_lc')
                     .list.eval(
                         (pl.element().struct.field('').is_in(list(letters)))
-                        & (build_int_expression(pl.element().struct.field('count'), [mults], expr_only=True)),
+                        & (
+                            build_int_expression(
+                                pl.element().struct.field('count'),
+                                [mults],
+                                expr_only=True,
+                            )
+                        ),
                         parallel=True,
                     )
                     .list.sum(),
@@ -895,13 +977,16 @@ def gen_sched_expr(words, options):
                 f = pl.any_horizontal(pl.col('RED', 'YELLOW', 'BLUE').cast(str) == lit.title())
                 verb = 'is exactly'
             cd = f'any PODIUM {verb} "{lit.title()}"'
-        case ['RED' | 'R' | 'YELLOW' | 'Y' | 'YEL' | 'BLUE' | 'BL' | 'THEME' | 'T' as col, regex]:
+        case [
+            'RED' | 'R' | 'YELLOW' | 'Y' | 'YEL' | 'BLUE' | 'BL' | 'THEME' | 'T' as col,
+            regex,
+        ]:
             col = COL_NAME_REMAPPING.get(col, col)
             if col == 'THEME' and options.time == 'primetime':
                 raise ValueError('THEME is not a column in primetime.')
             regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
             f = pl.col(col).cast(str).str.contains(f'(?i){regex}')
-            cd = f'{col} matches "{regex}"  (case-insensitive)'
+            cd = f'{col} matches "{regex}" (case-insensitive)'
         case ['CONTESTANT' | 'CON' | 'PODIUM' | 'P', regex]:
             regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
             f = pl.any_horizontal(pl.col('RED', 'YELLOW', 'BLUE').str.contains(f'(?i){regex}'))
@@ -929,7 +1014,10 @@ def gen_sched_expr(words, options):
             if options.time == 'primetime':
                 raise ValueError('There are no uncertain dates in prinmetime.')
             if p_q.startswith('L'):
-                f = pl.all_horizontal(pl.col('DATE').is_null(), pl.col('DATE_STR').str.contains(lit.title(), literal=True))
+                f = pl.all_horizontal(
+                    pl.col('DATE').is_null(),
+                    pl.col('DATE_STR').str.contains(lit.title(), literal=True),
+                )
                 verb = 'contains'
             else:
                 f = pl.all_horizontal(pl.col('DATE').is_null(), pl.col('DATE_STR') == lit.title())
@@ -939,7 +1027,10 @@ def gen_sched_expr(words, options):
             if options.time == 'primetime':
                 raise ValueError('There are no uncertain dates in prinmetime.')
             regex = re.sub(r'\\\w', lambda m: m.group().lower(), regex)
-            f = pl.all_horizontal(pl.col('DATE').is_null(), pl.col('DATE_STR').str.contains(f'(?i){regex}'))
+            f = pl.all_horizontal(
+                pl.col('DATE').is_null(),
+                pl.col('DATE_STR').str.contains(f'(?i){regex}'),
+            )
             cd = f'DATE is uncertain and matches "{regex}" (case-insensitive)'
         case _:
             raise ValueError(f'Malformed condition: {words}')

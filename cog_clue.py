@@ -1,7 +1,13 @@
 from discord.ext import commands, tasks
 import discord, random, asyncio, pickle, logging
 from clue import *
-from util import SuspectConverter, WeaponConverter, RoomConverter, send_PIL_image, SCHEDULER_TZ
+from util import (
+    SuspectConverter,
+    WeaponConverter,
+    RoomConverter,
+    send_PIL_image,
+    SCHEDULER_TZ,
+)
 
 from dropboxwayo import dropboxwayo
 
@@ -13,7 +19,7 @@ ABOUT_MASTER_CLUE = [
     'Four new suspects, two new weapons, and twelve rooms!',
     'The magnifying glasses are "snoop" spaces. You can randomly reveal one player\'s card only to you. You\'ll be able to continue your roll after the snoop, with the "cannot traverse previously hit spaces" rule reset on the leftover roll.',
     'By default, the "snoopee" will be told what card is snooped from their hand. The `blind_snoopee` can turn this notification off.',
-    'You may hop over another player\'s position instead of being totally blocked.',
+    "You may hop over another player's position instead of being totally blocked.",
     'Everyone starts in the Cloak Room, but it can never be the answer and can never be suggested.',
     'There is one secret passage outside of the rooms entirely. Use "secret" upon hitting the arrow.',
     'You can combine movement with secret passages and "hopping over" rooms, counting each as one against your roll. Cover a lot of space at once!',
@@ -30,7 +36,12 @@ class ClueCog(commands.Cog, name='Clue'):
         self.vc = None
         self.debug = _log.getEffectiveLevel() == logging.DEBUG
         self.active_games = {}
-        self.valid_options = {'timer': int, 'turn_order': str, 'random_spots': None, 'blind_snoopee': None}
+        self.valid_options = {
+            'timer': int,
+            'turn_order': str,
+            'random_spots': None,
+            'blind_snoopee': None,
+        }
 
     # async def cog_load(self):
     #     try:
@@ -289,7 +300,10 @@ class ClueCog(commands.Cog, name='Clue'):
                 player_count = len(self.active_games[ctx.channel.id]['players'])
                 status_embed = discord.Embed(title=f'{player_count}-player game:')
                 for cp in self.active_games[ctx.channel.id]['cg'].players:
-                    status_embed.add_field(name=f'{cp.id.display_name} as {cp.suspect}', value=f'{len(cp.cards)} cards')
+                    status_embed.add_field(
+                        name=f'{cp.id.display_name} as {cp.suspect}',
+                        value=f'{len(cp.cards)} cards',
+                    )
 
                 info_message = self.active_games[ctx.channel.id]['info_message'] = await ctx.send(
                     (
@@ -309,7 +323,11 @@ class ClueCog(commands.Cog, name='Clue'):
                     try:
                         await cp.id.send(''.join(itertools.repeat('=THE=LINE=', 7)))
                         with ClueCard.multicard_image(cp.cards) as i:
-                            await send_PIL_image(cp.id, i, f'{cp.id.display_name}_{cp.suspect.name}_cards')
+                            await send_PIL_image(
+                                cp.id,
+                                i,
+                                f'{cp.id.display_name}_{cp.suspect.name}_cards',
+                            )
                     except discord.Forbidden:
                         await ctx.send(
                             f'{cp.id.display_name} cannot receive DMs from me, aborting game. Please use `!cancelgame`.'
@@ -322,7 +340,7 @@ class ClueCog(commands.Cog, name='Clue'):
                     for cp in self.active_games[ctx.channel.id]['cg'].players
                 )
                 + '\n\n**ANSWER: '
-                + " ".join(c.name for c in self.active_games[ctx.channel.id]['cg'].answer)
+                + ' '.join(c.name for c in self.active_games[ctx.channel.id]['cg'].answer)
                 + '**'
             )
 
@@ -355,9 +373,9 @@ class ClueCog(commands.Cog, name='Clue'):
     @commands.command()
     async def roll(self, ctx, *override_roll):
         if self.debug:
+            result = int(override_roll[0]) if override_roll else 12
             # still need to run the command to advance gameplay
             self.active_games[ctx.channel.id]['cg'].roll()
-            result = int(override_roll[0]) if override_roll else 12
             self.active_games[ctx.channel.id]['cg'].cur_roll = result
         else:
             result = self.active_games[ctx.channel.id]['cg'].roll()
@@ -373,7 +391,8 @@ class ClueCog(commands.Cog, name='Clue'):
     @commands.command()
     async def move(self, ctx, *moves):
         """one or more pairs of directions and step(s) to take in that direction, adding up to the immediately previous roll.
-        If in a room with more than one door and rolling out, first specify which door according to the given map image."""
+        If in a room with more than one door and rolling out, first specify which door according to the given map image.
+        """
         # use cg_action here for move conversion
         _, move_args = self.active_games[ctx.channel.id]['cg'].translate('move ' + ' '.join(m.upper() for m in moves))
         # print(move_args)
@@ -399,7 +418,7 @@ class ClueCog(commands.Cog, name='Clue'):
 
     async def announce_room(self, ctx, r):
         extra = (
-            f'\n:musical_note: with {"i"*random.randint(5,30)}King! :musical_note:'
+            f'\n:musical_note: with {"i" * random.randint(5, 30)}King! :musical_note:'
             if r is Room.LOUNGE or r is MasterRoom.STUDIO
             else ''
         )
@@ -409,7 +428,8 @@ class ClueCog(commands.Cog, name='Clue'):
     async def suggest(self, ctx, suspect: SuspectConverter, weapon: WeaponConverter):
         """If you are the first to disprove, I'll DM you which card(s) you can send.
         You must confirm by DMing me a message containing which card to send before the game can move forward.
-        Creativity is allowed, any message containing one and exactly one of the eligible cards will be accepted."""
+        Creativity is allowed, any message containing one and exactly one of the eligible cards will be accepted.
+        """
         suggestion = (
             suspect,
             weapon,
@@ -425,7 +445,10 @@ class ClueCog(commands.Cog, name='Clue'):
             cp_embed.title = hint
         cp_embed.description = ''
         cp_embed.set_footer(text=f'SUGGESTION {sug_count}')
-        cp_iter = itertools.takewhile(lambda p: p is not disprove_cp, self.active_games[ctx.channel.id]['cg'].players)
+        cp_iter = itertools.takewhile(
+            lambda p: p is not disprove_cp,
+            self.active_games[ctx.channel.id]['cg'].players,
+        )
         next(cp_iter)  # flush cur_player out
         sug_description = [f'{cp.id.display_name} cannot disprove.' for cp in cp_iter]
         if disprove_cp:
@@ -436,7 +459,8 @@ class ClueCog(commands.Cog, name='Clue'):
 
         async with ctx.typing():
             await self.play_clip_clue(
-                f'Room {suggestion[2].ambience}' if random.random() < 0.5 else str(suggestion[0]), holdup=10
+                (f'Room {suggestion[2].ambience}' if random.random() < 0.5 else str(suggestion[0])),
+                holdup=10,
             )
             if 'NOT' not in hint and 'nohints' not in self.active_games[ctx.channel.id]['options']:
                 await self.play_clip_clue('Shock!', vi=1.5)
@@ -480,7 +504,13 @@ class ClueCog(commands.Cog, name='Clue'):
         self.active_games[ctx.channel.id]['sug_count'] += 1
 
     @commands.command()
-    async def accuse(self, ctx, suspect: SuspectConverter, weapon: WeaponConverter, room: RoomConverter):
+    async def accuse(
+        self,
+        ctx,
+        suspect: SuspectConverter,
+        weapon: WeaponConverter,
+        room: RoomConverter,
+    ):
         """Be sure you're right or it's game over!"""
         assert room != MasterRoom.CLOAK, 'Cloak Room cannot be right.'
         accusation = (suspect, weapon, room)
@@ -490,7 +520,9 @@ class ClueCog(commands.Cog, name='Clue'):
 
         with ClueCard.multicard_image(accusation) as i:
             await send_PIL_image(
-                ctx.channel, i, 'accusation_' + self.active_games[ctx.channel.id]['cur_player'].id.display_name
+                ctx.channel,
+                i,
+                'accusation_' + self.active_games[ctx.channel.id]['cur_player'].id.display_name,
             )
 
         texts = self.active_games[ctx.channel.id]['ct'].generate(
@@ -522,22 +554,30 @@ class ClueCog(commands.Cog, name='Clue'):
             if not self.active_games[ctx.channel.id]['master']:
                 with self.active_games[ctx.channel.id]['cur_player'].suspect.mosaic_image('win') as i:
                     await send_PIL_image(
-                        ctx.channel, i, self.active_games[ctx.channel.id]['cur_player'].suspect.name + '_win'
+                        ctx.channel,
+                        i,
+                        self.active_games[ctx.channel.id]['cur_player'].suspect.name + '_win',
                     )
             await ctx.channel.send(
-                self.active_games[ctx.channel.id]['cur_player'].id.display_name + ' wins!', embed=cp_embed
+                self.active_games[ctx.channel.id]['cur_player'].id.display_name + ' wins!',
+                embed=cp_embed,
             )
             await self.play_clip_clue('Elementary', holdup=20, vr_step=20)
             await ctx.channel.send(
                 'gg shitheads!' if random.random() < 0.25 else 'Good game everyone!',
-                embed=discord.Embed(title='WHO HAD WHAT', description=self.active_games[ctx.channel.id]['www']),
+                embed=discord.Embed(
+                    title='WHO HAD WHAT',
+                    description=self.active_games[ctx.channel.id]['www'],
+                ),
             )
             await asyncio.sleep(10)
         else:
             if not self.active_games[ctx.channel.id]['master']:
                 with self.active_games[ctx.channel.id]['cur_player'].suspect.mosaic_image('gameover') as i:
                     await send_PIL_image(
-                        ctx.channel, i, self.active_games[ctx.channel.id]['cur_player'].suspect.name + '_gameover'
+                        ctx.channel,
+                        i,
+                        self.active_games[ctx.channel.id]['cur_player'].suspect.name + '_gameover',
                     )
             cp_embed.title = 'There is evidence that you are wrong!'
             cp_embed.description = ''
@@ -554,7 +594,10 @@ class ClueCog(commands.Cog, name='Clue'):
                 await asyncio.sleep(5)
                 await ctx.channel.send(
                     'GAME OVER',
-                    embed=discord.Embed(title='WHO HAD WHAT', description=self.active_games[ctx.channel.id]['www']),
+                    embed=discord.Embed(
+                        title='WHO HAD WHAT',
+                        description=self.active_games[ctx.channel.id]['www'],
+                    ),
                 )
 
     @commands.command(aliases=['showmethefuckingboardyoushit'])

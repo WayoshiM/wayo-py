@@ -211,11 +211,18 @@ async def parse_time_options(ctx, options, *pgs):
         if pgs:
             assert (all(pg) for pg in pgs), 'Null PG somehow entered parse_time_options.'
             se = parse_endpoints(
-                options.start, options.end, *pgs, dateF=options.dateFormat, syndicated=options.time == 'syndicated'
+                options.start,
+                options.end,
+                *pgs,
+                dateF=options.dateFormat,
+                syndicated=options.time == 'syndicated',
             )
         else:
             se = parse_endpoints(
-                options.start, options.end, dateF=options.dateFormat, syndicated=options.time == 'syndicated'
+                options.start,
+                options.end,
+                dateF=options.dateFormat,
+                syndicated=options.time == 'syndicated',
             )
         if type(se) is str:
             await ctx.send(se)
@@ -301,7 +308,14 @@ async def send_PIL_image(channel, image, desc, content=None):
 
 async def send_PIL_gif(channel, image_frames, desc, **PIL_options):
     with io.BytesIO() as b:
-        image_frames[0].save(b, format='gif', save_all=True, append_images=image_frames[1:], optimize=True, **PIL_options)
+        image_frames[0].save(
+            b,
+            format='gif',
+            save_all=True,
+            append_images=image_frames[1:],
+            optimize=True,
+            **PIL_options,
+        )
         b.seek(0)
         return await channel.send(file=discord.File(b, filename=desc + '.gif'))
 
@@ -311,7 +325,12 @@ import discord.ui as dui
 
 class CancelButton(dui.Button):
     def __init__(self, row=None, authority_user_id=None, emoji=None, extra_callback=None):
-        super().__init__(style=discord.ButtonStyle.danger, label='Cancel', emoji=emoji or '❌', row=row)
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label='Cancel',
+            emoji=emoji or '❌',
+            row=row,
+        )
         self.authority_user_id = authority_user_id
         self.extra_callback = extra_callback
 
@@ -342,7 +361,14 @@ from sympy.logic.boolalg import Or as BOr
 from sympy.parsing.sympy_parser import parse_expr
 
 
-_COND_REPLACEMENTS = (('not', '~'), ('and', '&'), ('xor', '^'), ('or', '|'), ('"', ''), ("'", ''))
+_COND_REPLACEMENTS = (
+    ('not', '~'),
+    ('and', '&'),
+    ('xor', '^'),
+    ('or', '|'),
+    ('"', ''),
+    ("'", ''),
+)
 
 
 def logic_expression(expr: str):

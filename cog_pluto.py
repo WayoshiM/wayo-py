@@ -12,7 +12,15 @@ from discord.ext import commands
 
 from util import tz_autocomplete, send_long_mes, NONNEGATIVE_INT, POSITIVE_INT
 
-_CHANNEL_MAPPING = {'barker': 1025, 'tbe': 1025, '1025': 1025, 'carey': 1024, '1024': 1024, 'drew': 1024, 'bob': 1025}
+_CHANNEL_MAPPING = {
+    'barker': 1025,
+    'tbe': 1025,
+    '1025': 1025,
+    'carey': 1024,
+    '1024': 1024,
+    'drew': 1024,
+    'bob': 1025,
+}
 
 
 def cm_str(s):
@@ -47,10 +55,11 @@ class PlutoCog(commands.Cog, name='TVChannels'):
     async def _get_pluto_sched(self, channel: int, tz: pytz.timezone):
         now = datetime.now(tz=tz)
         url = self._pluto_api_url_template.format(
-            now.isoformat(timespec='milliseconds'), (now + timedelta(hours=12)).isoformat(timespec='milliseconds')
+            now.isoformat(timespec='milliseconds'),
+            (now + timedelta(hours=12)).isoformat(timespec='milliseconds'),
         ).replace('+', '%2B')
 
-        r = await self.bot.session.get(url)
+        r = await self.bot.asession.get(url)
         j = await r.json(loads=orjson.loads)
 
         for jj in j:
@@ -63,8 +72,9 @@ class PlutoCog(commands.Cog, name='TVChannels'):
         for s in ('', '-int-us-west-2'):
             try:
                 # any -0x:00 works, timezone conversion done below regardless
-                r = await self.bot.session.get(
-                    self._roku_url.format(s), headers={'x-roku-reserved-time-zone-offset': '-04:00'}
+                r = await self.bot.asession.get(
+                    self._roku_url.format(s),
+                    headers={'x-roku-reserved-time-zone-offset': '-04:00'},
                 )
                 j = await r.json(loads=orjson.loads)
                 break
@@ -88,7 +98,10 @@ class PlutoCog(commands.Cog, name='TVChannels'):
 
     async def _get_plex_sched(self):
         r = await self.bot.asession.get(
-            self._plex_url.format(date.today().strftime('%Y-%m-%d'), (date.today() + timedelta(7)).strftime('%Y-%m-%d')),
+            self._plex_url.format(
+                date.today().strftime('%Y-%m-%d'),
+                (date.today() + timedelta(7)).strftime('%Y-%m-%d'),
+            ),
             headers={'Accept': 'application/json', 'X-Plex-Provider-Version': '6.5.0'},
         )
         try:
@@ -130,14 +143,14 @@ class PlutoCog(commands.Cog, name='TVChannels'):
                     break
             for l in listings[idx + options.offset :]:
                 prod, dt = l
-                ss.append(dt.astimezone(tz).strftime('%b %d, %I:%M:%S%p') + f" - {prod:04d}D")
+                ss.append(dt.astimezone(tz).strftime('%b %d, %I:%M:%S%p') + f' - {prod:04d}D')
             sss = [f'`{s}`' for e, s in enumerate(ss) if options.offset < e < options.limit + options.offset]
             if sss:
                 ss = '\n'.join(sss)
                 if len(sss) <= 20:
                     await ctx.send(f'>>> {ss}')
                 else:
-                    await send_long_mes(ctx, ss.replace("`", ""))
+                    await send_long_mes(ctx, ss.replace('`', ''))
             else:
                 await ctx.send('`No results found within those limit and/or offset arguments.`')
         else:
@@ -194,7 +207,8 @@ class PlutoCog(commands.Cog, name='TVChannels'):
     async def rokuschedule(self, ctx, *, options: ScheduleFlags):
         """Fetches listings for Roku's Barker channel for the next 3-4 hours, listed in the given time zone.
 
-        Valid time zones can be found at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"""
+        Valid time zones can be found at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+        """
         async with ctx.typing():
             tz = pytz.timezone(options.timezone)
             listings = await self._get_roku_sched()
@@ -204,7 +218,7 @@ class PlutoCog(commands.Cog, name='TVChannels'):
             for l in listings:
                 num = int(l['content']['episodeNumber'])
                 prod = '083DT' if num == 83 else f'{num:04d}D'
-                ss.append(isoparse(l['date']).astimezone(tz).strftime('%I:%M%p') + f" - {prod}")
+                ss.append(isoparse(l['date']).astimezone(tz).strftime('%I:%M%p') + f' - {prod}')
             ss = '\n'.join(f'`{s}`' for s in ss)
             await ctx.send(f'>>> {ss}')
         else:
@@ -218,7 +232,8 @@ class PlutoCog(commands.Cog, name='TVChannels'):
     async def samsungschedule(self, ctx, *, options: ScheduleFlags):
         """Fetches listings for Samsung TV Plus's Barker channel, listed in the given time zone.
 
-        Valid time zones can be found at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"""
+        Valid time zones can be found at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+        """
         async with ctx.typing():
             tz = pytz.timezone(options.timezone)
             listings = await self._get_samsung_sched()
@@ -260,7 +275,8 @@ if __name__ == '__main__':
 
     now = datetime.now(tz=pytz.timezone('US/Eastern'))
     url = 'http://api.pluto.tv/v2/channels?start={}&stop={}'.format(
-        now.isoformat(timespec='milliseconds'), (now + timedelta(hours=12)).isoformat(timespec='milliseconds')
+        now.isoformat(timespec='milliseconds'),
+        (now + timedelta(hours=12)).isoformat(timespec='milliseconds'),
     ).replace('+', '%2B')
     import pyperclip
 

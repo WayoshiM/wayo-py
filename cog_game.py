@@ -62,7 +62,13 @@ class MastermindView(dui.View):
             self.add_item(s)
 
         self.guess_idx = tries - 1
-        self.guesses = [[[self.sample_space[0] if t == self.guess_idx else None] * code_length, None] for t in range(tries)]
+        self.guesses = [
+            [
+                [self.sample_space[0] if t == self.guess_idx else None] * code_length,
+                None,
+            ]
+            for t in range(tries)
+        ]
 
         self.cancel = CancelButton(row=2, authority_user_id=self.player_id)
         self.add_item(self.cancel)
@@ -180,7 +186,10 @@ class GameCog(commands.Cog, name='Game'):
 
         cog = self.bot.get_cog('Clue')
         if await cog.register(ctx, options):
-            self.active_games[ctx.channel.id] = {'owner': ctx.author.id, 'cog_name': 'Clue'}
+            self.active_games[ctx.channel.id] = {
+                'owner': ctx.author.id,
+                'cog_name': 'Clue',
+            }
 
     @game.command(with_app_command=False)
     async def masterclue(self, ctx, *options):
@@ -191,7 +200,10 @@ class GameCog(commands.Cog, name='Game'):
 
         cog = self.bot.get_cog('Clue')
         if await cog.register(ctx, options, master=True):
-            self.active_games[ctx.channel.id] = {'owner': ctx.author.id, 'cog_name': 'Clue'}
+            self.active_games[ctx.channel.id] = {
+                'owner': ctx.author.id,
+                'cog_name': 'Clue',
+            }
 
     def naturalendgame(self, ctx):
         del self.active_games[ctx.channel.id]
@@ -220,7 +232,12 @@ class GameCog(commands.Cog, name='Game'):
         # assert 4 <= options.tries <= 16, 'Tries must be between 4 and 16.'
 
         v = MastermindView(
-            options.length, options.colors, options.duplicates, options.tries, ctx.author.id, options.singlePlayer
+            options.length,
+            options.colors,
+            options.duplicates,
+            options.tries,
+            ctx.author.id,
+            options.singlePlayer,
         )
         m = await ctx.send(v.gen_content(False), view=v)
 

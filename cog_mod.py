@@ -63,7 +63,7 @@ class GRModCog(commands.Cog, name='GRMod'):
         error = []
         for m in members:
             try:
-                await m.timeout(self.sinbin_length, reason="Sin bin: forking.")
+                await m.timeout(self.sinbin_length, reason='Sin bin: forking.')
                 success.append(m.display_name)
             except (discord.Forbidden, discord.HTTPException, TypeError) as e:
                 # error.append(f'`Could not send {m.display_name} to the sin bin, error was: {e}`')
@@ -74,7 +74,7 @@ class GRModCog(commands.Cog, name='GRMod'):
 
     async def cog_command_error(self, ctx, e):
         if isinstance(e, commands.CheckFailure):
-            await ctx.send("`This command can only be run by a moderator or higher on the G-R.net server.`")
+            await ctx.send('`This command can only be run by a moderator or higher on the G-R.net server.`')
 
 
 async def setup(bot):

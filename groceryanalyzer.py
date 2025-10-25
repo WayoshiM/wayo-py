@@ -26,7 +26,10 @@ def grocanalyze(gps, min_total=20.0, max_total=21.0):
                     for glc4 in range(ceil((max_total - running_sum) / gp4)):
                         running_sum += glc4 * gp4
                         glc_sol.append(glc4)
-                        for glc5 in range(ceil((min_total - running_sum) / gp5), ceil((max_total - running_sum) / gp5)):
+                        for glc5 in range(
+                            ceil((min_total - running_sum) / gp5),
+                            ceil((max_total - running_sum) / gp5),
+                        ):
                             glc_sol.append(glc5)
                             result.append(
                                 '\t'.join(['{0:d}'.format(lc).rjust(len(gpss[i])) for i, lc in enumerate(glc_sol)])
@@ -55,7 +58,7 @@ def grocanalyze(gps, min_total=20.0, max_total=21.0):
 
 if __name__ == '__main__':
     grocery_parser = ArgumentParser(description='Analyze 5 GP prices in the context of all possible Grocery solutions')
-    grocery_parser.add_argument('G', help="GP prices", type=float, nargs=5)
+    grocery_parser.add_argument('G', help='GP prices', type=float, nargs=5)
     grocery_parser.add_argument('-c', dest='copy', help='Copy to clipboard', default=False, action='store_true')
     grocery_options = grocery_parser.parse_args()
 

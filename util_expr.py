@@ -76,7 +76,15 @@ _wkday_mapping = {
     'F': '5',
     'FRI': '5',
 }
-_wkday_backmapping = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+_wkday_backmapping = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+]
 _month_mapping = {
     'JAN': '1',
     'FEB': '2',
@@ -118,7 +126,10 @@ NUM_TO_MULT = {
     '9': 'nonuples',
     '10': 'decuples',
     '11': 'undecuples',
-    '12': 'dodecuples',
+    '12': 'duodecuples',
+    # '13': 'tridecuples',
+    # '14': 'quattuordecuples',
+    # '15': 'quindecuples',
 }
 NUM_TO_MULT |= {int(k): v for k, v in NUM_TO_MULT.items()}
 
@@ -132,7 +143,7 @@ def build_int_expression(base_expr, conds, date_hybrid=False, mult_hybrid=False,
     num_converter = (lambda n: NUM_TO_MULT[n]) if mult_hybrid else lambda n: n
 
     for c in conds:
-        if m := re.fullmatch('([\[\(])(\d+),\s*(\d+)([\)\]])', c):
+        if m := re.fullmatch(r'([\[\(])(\d+),\s*(\d+)([\)\]])', c):
             b1, start, end, b2 = m.groups()
             start = int(start)
             end = int(end)
@@ -142,18 +153,18 @@ def build_int_expression(base_expr, conds, date_hybrid=False, mult_hybrid=False,
             cond_builder.append(base_expr.is_between(start, end, closed=closed))
             desc_builder.append(f'{str_converter(b1)} {num_converter(start)} and {str_converter(b2)} {num_converter(end)}')
             plural |= start != 1 or end != 1
-        elif re.fullmatch('\d+(,\s*\d+)+', c):
-            c_strs = re.split(',\s*', c)
+        elif re.fullmatch(r'\d+(,\s*\d+)+', c):
+            c_strs = re.split(r',\s*', c)
             ns = [int(i) for i in c_strs]
             cond_builder.append(base_expr.is_in(ns))
             desc_builder.append('one of ' + (', '.join([num_converter(n) for n in c_strs] if mult_hybrid else c_strs)))
             plural |= ns != [1]
-        elif m := re.fullmatch('=?\s*(\d+)', c):
+        elif m := re.fullmatch(r'=?\s*(\d+)', c):
             n = int(m.group(1))
             cond_builder.append(base_expr == n)
             desc_builder.append(f'{num_converter(n)}')
             plural |= n != 1
-        elif m := re.fullmatch('(!=|>|<|<=|>=)\s*(\d+)', c):
+        elif m := re.fullmatch(r'(!=|>|<|<=|>=)\s*(\d+)', c):
             op, n = m.groups()
             cond_builder.append(eval(f'base_expr {c}'))
             desc_builder.append(f'{str_converter(op)} {num_converter(n)}')
@@ -183,7 +194,7 @@ def build_date_expression(base_expr, conds, dateFormat):
     df = lambda d: datetime.strptime(d, dateFormat).date()
 
     for c in conds:
-        if m := _DTM.match(f'([\[\(])({dateFormat}),\s*({dateFormat})([\)\]])', c):
+        if m := _DTM.match(rf'([\[\(])({dateFormat}),\s*({dateFormat})([\)\]])', c):
             b1, b2 = m.group(1, 4)
             start, end = [df(d) for d in m.group(2, 3)]
             left = 'left' if b1 == '[' else None
@@ -191,14 +202,14 @@ def build_date_expression(base_expr, conds, dateFormat):
             closed = 'both' if left and right else left if left else right if right else 'none'
             cond_builder.append(base_expr.is_between(start, end, closed=closed))
             desc_builder.append(f'{_date_logic_to_str[b1]} {m.group(2)} and {_date_logic_to_str[b2]} {m.group(3)}')
-        elif m := _DTM.match(f'^=?\s*({dateFormat})$', c):
+        elif m := _DTM.match(rf'^=?\s*({dateFormat})$', c):
             d = df(m.group(1))
             cond_builder.append(base_expr == d)
             desc_builder.append(m.group(1))
-        elif m := _DTM.match(f'({dateFormat})(?:,\s*({dateFormat}))+', c):
+        elif m := _DTM.match(rf'({dateFormat})(?:,\s*({dateFormat}))+', c):
             cond_builder.append(base_expr.is_in([df(d) for d in m.groups()]))
             desc_builder.append('on one of ' + (', '.join(m.groups())))
-        elif m := _DTM.match(f'(!=|>|<|<=|>=)\s*({dateFormat})', c):
+        elif m := _DTM.match(rf'(!=|>|<|<=|>=)\s*({dateFormat})', c):
             op, ds = m.groups()
             d = df(ds)
             cond_builder.append(eval(f'base_expr {op} d'))
@@ -243,9 +254,11 @@ def build_lineup_expr(
     freqs: Optional[_HashableCollection[int]],
 ):
     e = [
-        pl.col(f'PG{s}').cast(str).str.contains(f'(?i){pg_query}')
-        if type(pg_query) == str
-        else pl.col(f'PG{s}_p').is_in([str(pg) for pg in pg_query])
+        (
+            pl.col(f'PG{s}').cast(str).str.contains(f'(?i){pg_query}')
+            if type(pg_query) == str
+            else pl.col(f'PG{s}_p').is_in([str(pg) for pg in pg_query])
+        )
         for s in slots
     ]
 
@@ -260,12 +273,18 @@ def build_lineup_expr(
 
 def transform_str_to_dts(e, dateFormat):
     return [
-        re.sub(r'(\b\d\b|[A-Z]+)', lambda m: '0' + m.group() if m.group().isnumeric() else m.group().title(), ee)
-        if ee not in ('TODAY', 'YESTERDAY')
-        else (
-            datetime.now(tz=SCHEDULER_TZ).date()
-            if ee == 'TODAY'
-            else datetime.now(tz=SCHEDULER_TZ).date() - timedelta(days=1)
-        ).strftime(dateFormat)
+        (
+            re.sub(
+                r'(\b\d\b|[A-Z]+)',
+                lambda m: ('0' + m.group() if m.group().isnumeric() else m.group().title()),
+                ee,
+            )
+            if ee not in ('TODAY', 'YESTERDAY')
+            else (
+                datetime.now(tz=SCHEDULER_TZ).date()
+                if ee == 'TODAY'
+                else datetime.now(tz=SCHEDULER_TZ).date() - timedelta(days=1)
+            ).strftime(dateFormat)
+        )
         for ee in e
     ]

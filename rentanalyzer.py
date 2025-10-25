@@ -31,7 +31,7 @@ def rentanalyze(gps):
 
 if __name__ == '__main__':
     rent_parser = ArgumentParser(description='Analyze 6 GP prices in the context of all 180 possible Rent playings')
-    rent_parser.add_argument('G', help="GP prices", type=float, nargs=6)
+    rent_parser.add_argument('G', help='GP prices', type=float, nargs=6)
     rent_parser.add_argument('-c', dest='copy', help='Copy to clipboard', default=False, action='store_true')
     rent_options = rent_parser.parse_args()
 

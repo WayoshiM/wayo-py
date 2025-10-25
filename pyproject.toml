@@ -1,0 +1,6 @@
+[tool.black]
+line-length = 125
+skip-string-normalization = 1
+
+[tool.ruff.format]
+quote-style = "single"

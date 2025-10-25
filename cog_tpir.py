@@ -2,8 +2,8 @@ import asyncio
 import re
 from collections import deque, Counter
 from datetime import *
-from itertools import product, combinations, chain, repeat
-from functools import reduce
+from itertools import product, combinations, chain, repeat, permutations
+from functools import reduce, lru_cache
 from operator import add
 from typing import Tuple, Union, Dict
 
@@ -81,11 +81,21 @@ class BeeFlags(commands.FlagConverter, delimiter='=', case_insensitive=True):
     pulls: NONNEGATIVE_INT = commands.flag(aliases=['p'], default=5)
 
 
+class LionFlags(commands.FlagConverter, delimiter='=', case_insensitive=True):
+    prior_pulls: str = commands.flag(aliases=['pp'], default='')
+    total_pulls: commands.Range[int, 1, 5] = commands.flag(aliases=['p', 'tp'], default=5)
+    agg_sequences: bool = commands.flag(aliases=['agg'], default=True)
+
+
 def _pocket_df(envelopes: Dict[int, int], pulls: int):
     c = Counter(25 + sum(c) for c in combinations(chain(*(repeat(k, v) for k, v in envelopes.items())), pulls))
     return (
         pl.DataFrame({'amount': c.keys(), 'count': c.values()})
-        .select(pl.col('amount') / 100.0, 'count', pct_exact=100.0 * pl.col('count') / pl.sum('count'))
+        .select(
+            pl.col('amount') / 100.0,
+            'count',
+            pct_exact=100.0 * pl.col('count') / pl.sum('count'),
+        )
         .sort('amount')
         .with_columns(pct_at_most=pl.col('pct_exact').cum_sum())
         .with_columns(pct_at_least=100 - pl.col('pct_at_most') + pl.col('pct_exact'))
@@ -93,7 +103,10 @@ def _pocket_df(envelopes: Dict[int, int], pulls: int):
 
 
 def _bee_str(envelopes: Iterable[str]):
-    return reduce(add, (f'({e})' if len(e) > 1 else e for e in sorted(envelopes, key=len, reverse=True)))
+    return reduce(
+        add,
+        (f'({e})' if len(e) > 1 else e for e in sorted(envelopes, key=len, reverse=True)),
+    )
 
 
 def _bee_df(envelopes: Dict[str, int], pulls: int):
@@ -105,6 +118,53 @@ def _bee_df(envelopes: Dict[str, int], pulls: int):
             win=pl.all_horizontal(pl.col('result').str.contains(c) for c in 'CAR'),
         )
         .sort('win', pl.col('result').str.count_matches('(', literal=True), 'result')
+    )
+
+
+@lru_cache(maxsize=10)
+def _lion_df_distribution(pulls: int, *, prior_sequence: str = ''):
+    envelopes = {
+        '$': 5 - prior_sequence.count('$'),
+        'L': 5 - prior_sequence.count('L'),
+        '+': 30 - prior_sequence.count('+'),
+    }
+    return Counter(''.join(c) for c in permutations(chain(*(repeat(k, v) for k, v in envelopes.items())), pulls))
+
+
+def _lion_df(pulls: int, *, prior_sequence: str = '', agg: bool = True):
+    c = _lion_df_distribution(pulls, prior_sequence=prior_sequence)
+
+    df = (
+        pl.DataFrame({'sequence': c.keys(), 'count': c.values()})
+        .with_columns(sequence=pl.concat_str([pl.lit(prior_sequence), 'sequence']))
+        .with_columns(
+            # a very neat way to take everything after the last LOSE, even if empty
+            winnings=pl.col('sequence')
+            .str.split('L')
+            .list.last(),
+        )
+        .with_columns(
+            winnings=pl.concat_str(
+                (100000 * pl.col('winnings').str.count_matches('$', literal=True)).cast(pl.String),
+                pl.col('winnings').str.replace_all('$', '', literal=True),
+            )
+        )
+    )
+
+    if agg:
+        df = df.group_by('winnings').agg(count=pl.sum('count'))
+
+    df = df.with_columns(pct_exact=100.0 * pl.col('count') / pl.sum('count'))
+
+    return (
+        (
+            df.sort('winnings')
+            .with_columns(pct_at_most=pl.col('pct_exact').cum_sum())
+            .with_columns(pct_at_least=100 - pl.col('pct_at_most') + pl.col('pct_exact'))
+            .sort('winnings', descending=True)
+        )
+        if agg
+        else (df.sort('winnings', 'sequence', descending=(True, False)))
     )
 
 
@@ -120,13 +180,17 @@ class TPIRCog(commands.Cog, name='TPIR'):
         # self._topic = 'https://pluto.tv/live-tv/163 https://bit.ly/rokutpir | https://bit.ly/plutotpir | Current and upcoming eps on Pluto: '
 
         self.all_pg_str = ', '.join([str(pg) for pg in sorted(PG.partition_table['any game'], key=lambda p: p.sheetName)])
-        self.all_pggroup_str = ', '.join([k for k in PG.partition_table.keys() if k != 'any game' and k != 'CAR_BOATABLE'])
+        self.all_pggroup_str = ', '.join(
+            sorted(k for k in PG.partition_table.keys() if k != 'any game' and k != 'CAR_BOATABLE')
+        )
 
         self.pocket_envelopes = {0: 2, 5: 4, 10: 5, 25: 4, 50: 3, 75: 1, 200: 1}
         self.pocket_df = _pocket_df(self.pocket_envelopes, 4)
 
         self.bee_envelopes = {'CAR': 2, 'C': 11, 'A': 11, 'R': 6}
         self.bee_df = _bee_df(self.bee_envelopes, 5)
+
+        self.done_full_lion = False
 
     @commands.hybrid_group(invoke_without_command=True, case_insensitive=True)
     async def pg(self, ctx):
@@ -150,7 +214,12 @@ class TPIRCog(commands.Cog, name='TPIR'):
 
     @pg.command(name='group', aliases=['g'], with_app_command=False)
     async def pggroup(
-        self, ctx, group: str.upper, pgs: commands.Greedy[Union[PGConverter, PGGroupConverter]], *, options: PGGroupFlags
+        self,
+        ctx,
+        group: str.upper,
+        pgs: commands.Greedy[Union[PGConverter, PGGroupConverter]],
+        *,
+        options: PGGroupFlags,
     ):
         """If no PGs are given, fetch the mapping of the group name to the PGs it corresponds to.
 
@@ -162,7 +231,8 @@ class TPIRCog(commands.Cog, name='TPIR'):
 
         For more info on PGGroups, including the default mappings, see https://pastebin.com/FFEaQZHx
 
-        PGs and PGGroups are all mapped to at least one single-word key. See the pastebin for a complete listing."""
+        PGs and PGGroups are all mapped to at least one single-word key. See the pastebin for a complete listing.
+        """
         # The bot will react with an OK emoji when making a group. Confirm it is the mapping you wanted by reacting with the same OK emoji, and the bot will add the mapping and react with a checkmark. If you made a mistake, just let it go and after a few seconds it will react with an X emoji, and no mapping will be added.
 
         if re.search(r'\s+', group):
@@ -184,7 +254,7 @@ class TPIRCog(commands.Cog, name='TPIR'):
                 if name := PG.partition_table.inverse.get(frozenset(s)):
                     await ctx.send(f'`This resulting set of PGs already exists as "{name}".`')
                 else:
-                    pg_str = ', '.join(str(pg) for pg in s)
+                    pg_str = ', '.join(sorted(str(pg) for pg in s))
                     v = PGGroupAddView(group, s, pg_str, ctx.message.author)
                     m = await ctx.send(f'`Map "{group}" to {pg_str}?`', view=v)
                     if await v.wait():
@@ -258,12 +328,14 @@ class TPIRCog(commands.Cog, name='TPIR'):
         ctx,
         chip_count: commands.Range[int, 1, 5],
         amounts: commands.Greedy[NONNEGATIVE_INT] = commands.parameter(
-            default=lambda ctx: _DEFAULT_PLINKO_VALS, displayed_default=str(tuple(_DEFAULT_PLINKO_VALS))
+            default=lambda ctx: _DEFAULT_PLINKO_VALS,
+            displayed_default=str(tuple(_DEFAULT_PLINKO_VALS)),
         ),
     ):
         """Find all possible winning amounts for a Plinko playing with a certain chip count.
 
-        If providing custom values, must be exactly four of them. Zero is automatically added as the 5th amount."""
+        If providing custom values, must be exactly four of them. Zero is automatically added as the 5th amount.
+        """
         if len(set(amounts)) != 4:
             await ctx.send('`Exactly four unique, positive amounts for Plinko required.`')
             return
@@ -328,7 +400,11 @@ class TPIRCog(commands.Cog, name='TPIR'):
             return
 
         async with ctx.typing():
-            sol_count, sol_str = ganalyze([round(a, 2) for a in gps], min_total=round(min, 2), max_total=round(max, 2))
+            sol_count, sol_str = ganalyze(
+                [round(a, 2) for a in gps],
+                min_total=round(min, 2),
+                max_total=round(max, 2),
+            )
             initial_str = (
                 f'{sol_count} solutions: '
                 if sol_count < GROC_LIMIT
@@ -378,10 +454,10 @@ class TPIRCog(commands.Cog, name='TPIR'):
     async def pocket(self, ctx, *, options: PocketFlags):
         """Print the exact distribution of all possible Pocket envelope outcomes. This is a known and static probability distribution, at least until Pocket's rules change, if ever.
 
-        - "count" is the number of ways to draw four cards to end up at this amount. This column sums up to (20 choose 4) = 20*19*18*17 = 4845.
+        - "count" is the number of ways to draw four cards to end up at this amount. This column sums up to (20 choose 4) = 20*19*18*17 / 24 = 4845 in the default case.
         - "pct_exact" is the percentage chance of finishing with exactly the amount in the same row.
         - "pct_at_most" is the percentage chance of finishing at this amount or below.
-        - "pct_at_most" is the percentage chance of finishing at this amount or above.
+        - "pct_at_least" is the percentage chance of finishing at this amount or above.
 
         Specify an amount (default all rows), if specified then the table is cut off depending on the "how" argument (either "start"ing at the row, "end"ing at the row, or only that row).
 
@@ -405,7 +481,10 @@ class TPIRCog(commands.Cog, name='TPIR'):
         with pl.Config(float_precision=2):
             sorted_envelopes = SortedDict({k / 100.0: v for k, v in envelopes.items()})
             pretty_envelopes = ', '.join(f'{v} {k:.2f}' for k, v in sorted_envelopes.items())
-            await send_long_mes(ctx, f'Distribution: {pretty_envelopes}\nPulls: {options.pulls}\n\n' + ppp(df))
+            await send_long_mes(
+                ctx,
+                f'Distribution: {pretty_envelopes}\nPulls: {options.pulls}\n\n' + ppp(df),
+            )
 
     @tpiranalyze.command(name='bee', with_app_command=False)
     # @app_commands.describe(
@@ -415,7 +494,7 @@ class TPIRCog(commands.Cog, name='TPIR'):
     async def bee(self, ctx, *, options: BeeFlags):
         """Print the exact distribution of all possible Bee card outcomes.
 
-        - "count" is the number of ways to draw five cards to end up at this amount. This column sums up to (30 choose 5) = 20*19*18*17 = 142506.
+        - "count" is the number of ways to draw five cards to end up at this amount. This column sums up to (30 choose 5) = 30*29*28*27*26 / 120 = 142506 in the default case.
         - "pct_exact" is the percentage chance of finishing with exactly this combo in the same row.
 
         The table is sorted first by losses, then wins, then lexically (with CAR cards last). All rows will have all CAR listed first, then all C's, etc.
@@ -437,6 +516,54 @@ class TPIRCog(commands.Cog, name='TPIR'):
                 f'Distribution: {pretty_cards}\nPulls: {options.pulls}\nWin Chance: {win_chance:.2f}%\n\n'
                 + ppp(df.drop('win')),
             )
+
+    @tpiranalyze.command(name='lion', with_app_command=False)
+    # @app_commands.describe(
+    #     amount='The amount to start, end, or only print',
+    #     how='Whether to print starting at this amount, ending, or only this amount. Default "only".',
+    # )
+    async def lion(self, ctx, *, options: LionFlags):
+        """Print the exact distribution of possible Lion winnings, for:
+
+        - the total number of pulls (default & max 5),
+        - prior pulls (a 0-4 length "word" of any combo of "$", "L", "+").
+
+        The distribution is five 100k ($), five LOSE IT ALL (L), and thirty additional smaller prizes (+).
+
+        Since the exact distribution of non-100 and LOSEs is unknown and could vary from playing to playing, the rest is grouped under this "+". and winnings are listed as "+"s on top of the 100ks.
+
+        Each row is an unique winnings amount (multiple of 100k plus the number of +), unless agg_sequences is False - then it is each possible sequence. By default it is aggregated to winnings for brevity.
+
+        - "count" is the number of ways to end up at these winnings / sequence. This column sums up to (40 permute 5) = 40*39*38*37*36 = 78,960,960 with default parameters.
+        - "pct_exact" is the percentage chance of finishing with these winnings / sequence in the same row.
+        - If grouped by winnings, then the following columns are also present:
+        - "pct_at_most" is the percentage chance of finishing at these winnings or below.
+        - "pct_at_least" is the percentage chance of finishing at these winnings or above.
+
+        The table is sorted by winnings, descending (and sequences ascending if included).
+
+        Reshaping the 40-pick board is not supported at this time.
+        """
+
+        if not re.fullmatch(rf'[\$\+L]{{0,{options.total_pulls - 1}}}', options.prior_pulls):
+            raise commands.BadArgument(f'Invalid prior pulls string: "{options.prior_pulls}"')
+
+        if options.total_pulls == 5 and not options.prior_pulls and not self.done_full_lion:
+            m = await ctx.send('`5-pull Lion distrubition needs to be recreated, give me a moment...`')
+            # populate in cache as well
+            df = await asyncio.to_thread(_lion_df, 5, agg=options.agg_sequences)
+            # print(self.lion_df.select(pl.col('count').sum()))
+            await m.delete()
+            self.done_full_lion = True
+        else:
+            df = _lion_df(
+                options.total_pulls - len(options.prior_pulls),
+                prior_sequence=options.prior_pulls,
+                agg=options.agg_sequences,
+            )
+
+        with pl.Config(float_precision=3):
+            await send_long_mes(ctx, ppp(df))
 
     async def cog_command_error(self, ctx, e):
         if isinstance(e, commands.RangeError):

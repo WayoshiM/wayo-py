@@ -61,7 +61,7 @@ FLAG_INFO = OrderedDict(
         '*': 'A playing with rule changes just for that playing (such as a Big Money Week version of a casher, or 35th Anniversary Plinko), a LMAD Mashup game, or in two syndicated cases, a "vintage car reproduction". Note for MDS shows, an increase on the top prize on cashers was so common that these instances are not denoted with this flag.',
         '@': 'A playing for a restored car, or a 4-prizer played for LA sports season tickets.',
         'R': 'A playing for really unusual prize(s).',
-        '$': "Mainly a non-cash game played for cash, hence the use of the dollar sign in wayo.py output. In syndicated, Double Prices was played twice in one segment, for two prizes. In a couple instances instead, a car game for a trailer, or in the one instance of the all-Plinko show, Plinko for two regular prizes.",
+        '$': 'Mainly a non-cash game played for cash, hence the use of the dollar sign in wayo.py output. In syndicated, Double Prices was played twice in one segment, for two prizes. In a couple instances instead, a car game for a trailer, or in the one instance of the all-Plinko show, Plinko for two regular prizes.',
         '^': 'The slotting of the game is uncertain. Some old records are incomplete and slotted by best guess.',
         '?': 'The identity of the game is uncertain. Some old records are incomplete and this is a best guess on what the game was. Most often it is known which set of two or three games occurred within a small subset of shows, with no further certainty.',
         'M': 'The Million Dollar Game in a Drew MDS (primetime) in 2008. Shows up as `MDG` in wayo.py output.',
@@ -94,7 +94,11 @@ class ConflictSheet:
     _MAX_CACHE = 64
     _CACHE_GETTER = attrgetter('cache')
 
-    def __init__(self, load_func: Callable[[], io.BytesIO], save_func: Callable[[io.BytesIO], None]):
+    def __init__(
+        self,
+        load_func: Callable[[], io.BytesIO],
+        save_func: Callable[[io.BytesIO], None],
+    ):
         self.load_func = load_func
         self.save_func = save_func
         self.cache = LFUCache(self._MAX_CACHE)
@@ -108,7 +112,13 @@ class ConflictSheet:
     def is_ready(self):
         return bool(self._df_dict)
 
-    def gen_sheet(self, pg_playings: Sequence[PGPlaying], endpoints: Portion, seasonText: str, time: str):
+    def gen_sheet(
+        self,
+        pg_playings: Sequence[PGPlaying],
+        endpoints: Portion,
+        seasonText: str,
+        time: str,
+    ):
         assert len(pg_playings) == 6
         pgs = [pgp.pg for pgp in pg_playings]
 
@@ -156,7 +166,13 @@ class ConflictSheet:
             ttable.add_row(row)
 
         ttable.set_cols_width(
-            [max(MAX_PG_NAME_LEN, len(seasonText), max(len(str(pgp)) for pgp in pg_playings))]
+            [
+                max(
+                    MAX_PG_NAME_LEN,
+                    len(seasonText),
+                    max(len(str(pgp)) for pgp in pg_playings),
+                )
+            ]
             + [max(3, 1 + int(np.log10(n.max()))) for n in nums.T]
             + [5 if hundo else 4]
         )
@@ -242,7 +258,10 @@ class ConflictSheet:
                 if sample:
                     mp = choice(tuple(sample))
                     respect_halves = pct_chance(95)
-                    slot = self._pick_slot(mp, unused_slots & halves[half] if respect_halves else unused_slots)
+                    slot = self._pick_slot(
+                        mp,
+                        unused_slots & halves[half] if respect_halves else unused_slots,
+                    )
                     nPGs[slot - 1] = mp
                     unused_slots.remove(slot)
                     pg_sample -= PG.partition_table[f'REG. {fee}']
@@ -322,7 +341,11 @@ class ConflictSheet:
 
     @cachedmethod(_CACHE_GETTER, key=partial(hashkey, 'cc'))
     def concurrence_query(
-        self, endpoints: Portion, time: str, pgQueries: Tuple[PG], pgFlags: tuple[Optional[frozenset[int]]]
+        self,
+        endpoints: Portion,
+        time: str,
+        pgQueries: Tuple[PG],
+        pgFlags: tuple[Optional[frozenset[int]]],
     ):
         q = self.endpoint_sub(endpoints, time)
 
@@ -343,7 +366,10 @@ class ConflictSheet:
         q = self._df_dict[time]
 
         vc_subset = [[f'PG{i}_p', f'PG{i}_f'] for i in range(1, 4 if time == 'syndicated' else 7)]
-        coalesce_exprs = [pl.coalesce('PG', 'PG_right').alias('PG'), pl.coalesce('flag', 'flag_right').alias('flag')]
+        coalesce_exprs = [
+            pl.coalesce('PG', 'PG_right').alias('PG'),
+            pl.coalesce('flag', 'flag_right').alias('flag'),
+        ]
         if by:
             for vc in vc_subset:
                 vc.insert(0, by)
@@ -368,7 +394,12 @@ class ConflictSheet:
 
     def write_excel(self):
         # coud factor these static methods & variables out, but ultimately a minor concern
-        general_format = {'font_name': 'Franklin Gothic Medium', 'font_size': 12, 'align': 'center', 'border': 1}
+        general_format = {
+            'font_name': 'Franklin Gothic Medium',
+            'font_size': 12,
+            'align': 'center',
+            'border': 1,
+        }
         date_format = dict(num_format='m/d/yyyy', **general_format)
         bg_colors = [
             '#FF0000',
@@ -387,10 +418,14 @@ class ConflictSheet:
             bit_cond = (
                 (lambda b: b < 9)
                 if time in ('daytime', 'unaired')
-                else lambda b: b < 7 if time == 'syndicated' else (lambda b: not (7 <= b <= 8))
+                else lambda b: (b < 7 if time == 'syndicated' else (lambda b: not (7 <= b <= 8)))
             )
             l = [
-                {'type': 'formula', 'criteria': f'={col}2={2**bit}', 'format': {'bg_color': bgc}}
+                {
+                    'type': 'formula',
+                    'criteria': f'={col}2={2**bit}',
+                    'format': {'bg_color': bgc},
+                }
                 for bit, bgc in enumerate(bg_colors)
                 if bit_cond(bit)
             ]
@@ -399,14 +434,20 @@ class ConflictSheet:
                     {
                         'type': 'formula',
                         'criteria': f'={col}2=9',
-                        'format': {'bg_color': bg_colors[0], 'font_color': bg_colors[3]},
+                        'format': {
+                            'bg_color': bg_colors[0],
+                            'font_color': bg_colors[3],
+                        },
                     }
                 )
                 l.append(
                     {
                         'type': 'formula',
                         'criteria': f'={col}2=72',
-                        'format': {'bg_color': bg_colors[6], 'font_color': bg_colors[3]},
+                        'format': {
+                            'bg_color': bg_colors[6],
+                            'font_color': bg_colors[3],
+                        },
                     }
                 )
             if time == 'primetime':
@@ -414,7 +455,10 @@ class ConflictSheet:
                     {
                         'type': 'formula',
                         'criteria': f'={col}2=513',
-                        'format': {'bg_color': bg_colors[0], 'font_color': bg_colors[-1]},
+                        'format': {
+                            'bg_color': bg_colors[0],
+                            'font_color': bg_colors[-1],
+                        },
                     }
                 )
             return l
@@ -470,7 +514,12 @@ class ConflictSheet:
                     hide_gridlines=True,
                 )
 
-            key_df = pl.from_dict({'KEY': FLAG_INFO.values(), 'FLAG': [2**b for b in range(len(FLAG_INFO))]})
+            key_df = pl.from_dict(
+                {
+                    'KEY': FLAG_INFO.values(),
+                    'FLAG': [2**b for b in range(len(FLAG_INFO))],
+                }
+            )
             key_format = dict(text_wrap=True, **general_format) | {'align': 'left'}
             key_df.write_excel(
                 wb,
@@ -482,7 +531,11 @@ class ConflictSheet:
                 column_widths={'KEY': 690, 'FLAG': 0},
                 conditional_formats={
                     'KEY': [
-                        {'type': 'formula', 'criteria': f'=B2={2**bit}', 'format': {'bg_color': bgc}}
+                        {
+                            'type': 'formula',
+                            'criteria': f'=B2={2**bit}',
+                            'format': {'bg_color': bgc},
+                        }
                         for bit, bgc in enumerate(bg_colors)
                     ]
                 },
@@ -591,7 +644,13 @@ class ConflictSheet:
                 q.lazy()
                 .with_columns(
                     pl.when(pl.col(f'PG{d}_f') > 0)
-                    .then(pl.format('{} ({})', pl.col(f'PG{d}'), pl.col(f'PG{d}_f').cast(pl.String).replace(FLAG_STRS)))
+                    .then(
+                        pl.format(
+                            '{} ({})',
+                            pl.col(f'PG{d}'),
+                            pl.col(f'PG{d}_f').cast(pl.String).replace(FLAG_STRS),
+                        )
+                    )
                     .otherwise(pl.col(f'PG{d}'))
                     for d in range(1, 4 if era == 'syndicated' else 7)
                 )
@@ -617,7 +676,7 @@ class ConflictSheet:
             # and if a new flag combo is coming in or not, which is also column-dependent (new slotting)
             # let's scrap it, can actually now pl.Enum raw PG safely
             self._df_dict[era] = q.with_columns(
-                (cs.matches('^PG\d_p$')).cast(pl.Enum([pg.sheetName for pg in PG]))
+                (cs.matches(r'^PG\d_p$')).cast(pl.Enum([pg.sheetName for pg in PG]))
             ).collect()
 
 

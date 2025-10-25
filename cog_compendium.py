@@ -84,7 +84,7 @@ def gen_compendium_submes(df: pl.DataFrame, time: str) -> str:
 
             c_exprs = [
                 pl.when(pl.col(col)).then(pl.lit(col)).otherwise(pl.lit('')).alias(col)
-                for col, dtype in q.schema.items()
+                for col, dtype in q.collect_schema().items()
                 if isinstance(dtype, pl.Boolean) and col not in exclude
             ]
             if c_exprs:
@@ -94,7 +94,12 @@ def gen_compendium_submes(df: pl.DataFrame, time: str) -> str:
         if time in ('syndicated', 'primetime'):
             wc.append(pl.col('DATE').dt.strftime('%b %d %Y'))
         if time == 'syndicated':
-            wc.extend([pl.col('EP').cast(str).str.zfill(4), pl.col('E/S').cast(str).str.zfill(3)])
+            wc.extend(
+                [
+                    pl.col('EP').cast(str).str.zfill(4),
+                    pl.col('E/S').cast(str).str.zfill(3),
+                ]
+            )
 
         if wc:
             q = q.with_columns(wc)
@@ -120,7 +125,9 @@ class TimeFlags(commands.FlagConverter, delimiter='=', case_insensitive=True):
 class SearchFlags(TimeFlags):
     logicExpr: logic_expression = commands.flag(aliases=['logic'], default='all')
     conditions: List[str] = commands.flag(
-        name='condition', aliases=['cond'], default=lambda ctx: ['rd;br'] if ctx.command.name == 'play' else []
+        name='condition',
+        aliases=['cond'],
+        default=lambda ctx: ['rd;br'] if ctx.command.name == 'play' else [],
     )
     aggregation: str = commands.flag(aliases=['agg'], default='None')
     random: NONNEGATIVE_INT = commands.flag(aliases=['r'], default=0)
@@ -135,7 +142,7 @@ class SearchFlags(TimeFlags):
 #     puzzler: bool = commands.flag(aliases=['p'], default=None)
 
 
-UNIQUE_LETTER_REGEX = fr'^(?:([{string.ascii_uppercase}])(?!.*\1)){{0,26}}$'
+UNIQUE_LETTER_REGEX = rf'^(?:([{string.ascii_uppercase}])(?!.*\1)){{0,26}}$'
 
 
 def unique_letters(s):
@@ -208,7 +215,8 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
         Primetime also downloads the BR choices and does a sanity check. Same for syndicated if any season > 35.
 
-        Only Wayoshi, dftackett, 9821, Kev347, and Thetrismix can currently run this command."""
+        Only Wayoshi, dftackett, 9821, Kev347, and Thetrismix can currently run this command.
+        """
         if not pages:
             raise ValueError('Invalid page provided.')
         elif len(pages) > 5:
@@ -233,7 +241,12 @@ class CompendiumCog(commands.Cog, name='Compendium'):
                 pages.append('choices50')
 
             await asyncio.gather(*(self.wcd.dl_page(p) for p in pages))
+            # await ctx.channel.send(str(pages))
+            # for p in pages:
+            #     await self.wcd.dl_page(p)
+            # await asyncio.sleep(5)
 
+            # primetime page has everything in up, so we fake add these pages after downloading them
             if 'primetime' in pages:
                 pages.append('choicesprimetime')
                 pages.append('schedprimetime')
@@ -378,9 +391,18 @@ class CompendiumCog(commands.Cog, name='Compendium'):
                         df = vc.collect()
 
                         if df.height > 1:
-                            df.extend(df.select(pl.lit('ALL').alias(col), *[pl.sum(c) for c in df.columns[1:]]))
+                            df.extend(
+                                df.select(
+                                    pl.lit('ALL').alias(col),
+                                    *[pl.sum(c) for c in df.columns[1:]],
+                                )
+                            )
 
-                        ssss = add_separator_lines(ppp(df), df.columns[-2] if len(s_chunks) > 1 else None, df.height > 1)
+                        ssss = add_separator_lines(
+                            ppp(df),
+                            df.columns[-2] if len(s_chunks) > 1 else None,
+                            df.height > 1,
+                        )
 
                         total_str += f'{col} FREQUENCY TABLE, {season_portion_str_2(season_range)} ({by}) ({cov_pct:.1f}% COV)\n\n{ssss}'
                     case ['PUZZLE' | 'P', *n]:
@@ -418,7 +440,12 @@ class CompendiumCog(commands.Cog, name='Compendium'):
                             .explode('m')
                             .unnest('m')
                             .collect()
-                            .pivot(index='LETTER', columns='m', values='count', sort_columns=True)
+                            .pivot(
+                                index='LETTER',
+                                columns='m',
+                                values='count',
+                                sort_columns=True,
+                            )
                             .fill_null(0)
                             .sort('LETTER')
                         )
@@ -454,7 +481,8 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
         "random" can be specified to output a random sample of the rseulting matching dataset instead off the full one.
 
-        The dataset used is specified by the "time" parameter (syndicated and primetime only)."""
+        The dataset used is specified by the "time" parameter (syndicated and primetime only).
+        """
 
         if options.time not in ('syndicated', 'primetime'):
             raise ValueError('Invalid time for this search table.')
@@ -513,7 +541,10 @@ class CompendiumCog(commands.Cog, name='Compendium'):
                             .sum()
                             .with_columns(pct=(100 * pl.col('CHOSEN') / pl.col('CHOICE')).round(1))
                             .pivot(
-                                index='CATEGORY', columns='S', values=['CHOSEN', 'CHOICE', 'pct'], aggregate_function='sum'
+                                index='CATEGORY',
+                                columns='S',
+                                values=['CHOSEN', 'CHOICE', 'pct'],
+                                aggregate_function='sum',
                             )
                             .with_columns(
                                 pl.sum_horizontal(cs.starts_with('CHOSEN').fill_null(0)).alias('ALL_CHOSEN'),
@@ -580,7 +611,8 @@ class CompendiumCog(commands.Cog, name='Compendium'):
         No aggregation output type is supported at this time.
 
         "random" can be specified to output a random sample of the rseulting matching dataset instead off the full one.
-        The dataset used is specified by the "time" parameter (syndicated and primetime only)."""
+        The dataset used is specified by the "time" parameter (syndicated and primetime only).
+        """
 
         if options.time not in ('syndicated', 'primetime'):
             raise ValueError('Invalid time for this search table.')
@@ -623,7 +655,12 @@ class CompendiumCog(commands.Cog, name='Compendium'):
 
     @wheelcompendium.command(aliases=['pc'], description='Gives the total puzzle count in the given seasons.')
     async def puzzle_count(
-        self, ctx, seasons: commands.Greedy[SEASON_RANGE], range: Optional[bool] = False, *, options: TimeFlags
+        self,
+        ctx,
+        seasons: commands.Greedy[SEASON_RANGE],
+        range: Optional[bool] = False,
+        *,
+        options: TimeFlags,
     ):
         """Gives the total puzzle count in the compendium in the given seasons (all by default, if range is True it will treat each pair of inputs as an inclusive range) compendium without any further results.
 
@@ -732,9 +769,9 @@ class CompendiumCog(commands.Cog, name='Compendium'):
         embed = discord.Embed(title='Wheel Compendium Play')
         embed.set_footer(text=f'Sample size: {sub_df.height}')
 
-        regex_letters = fr'^(?:([{bl_str}])(?!.*\1)){{{count_letters}}}$'
+        regex_letters = rf'^(?:([{bl_str}])(?!.*\1)){{{count_letters}}}$'
 
-        current_p = re.sub(f"[{bl_str}]", '_', p_str)
+        current_p = re.sub(f'[{bl_str}]', '_', p_str)
         if '_' not in current_p:
             embed.description = (
                 f'```{current_p}\n\n{c} ({d_s}, {r})\n{given_letters}\n\nHey, what are you trying to pull!?```'
@@ -767,7 +804,7 @@ class CompendiumCog(commands.Cog, name='Compendium'):
             def inner_check(m):
                 if m.channel != ctx.channel or (options.singlePlayer and m.author != ctx.author):
                     return False
-                mc = re.sub("‘|’|`", "'", m.content.upper())
+                mc = re.sub('‘|’|`', "'", m.content.upper())
                 if mc == p:
                     return True
                 elif letters:
@@ -796,7 +833,7 @@ class CompendiumCog(commands.Cog, name='Compendium'):
             else:
                 blank_letters -= set(letters)
                 bl_str = ''.join(blank_letters)
-                current_p = re.sub(f"[{bl_str}]", '_', p_str)
+                current_p = re.sub(f'[{bl_str}]', '_', p_str)
                 bottom_str = f'\n{given_letters} {letters}' if given_letters else f'\n{letters}'
                 if '_' in current_p:
                     embed.description = f'```\n{current_p}\n\n{c}{meta_str}\n{bottom_str}\n15 seconds, GO!```'
@@ -827,7 +864,13 @@ class CompendiumCog(commands.Cog, name='Compendium'):
         await ctx.send(COMPENDIUM_NOTES)
 
     async def cog_command_error(self, ctx, e):
-        if isinstance(e, (commands.errors.MissingRequiredArgument, commands.errors.MissingRequiredFlag)):
+        if isinstance(
+            e,
+            (
+                commands.errors.MissingRequiredArgument,
+                commands.errors.MissingRequiredFlag,
+            ),
+        ):
             if ctx.command.name == 'search':
                 await ctx.send('At least one condition required.')
             elif ctx.command.name == 'play':

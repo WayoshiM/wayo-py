@@ -79,7 +79,11 @@ def master_piece_image(s: MasterSuspect) -> Image:
     red, green, blue, alpha = data.T
 
     colored_areas = (alpha == 255) & ((red > 10) | (green > 10) | (blue > 10))
-    data[..., :-1][colored_areas.T] = (s.color >> 16, (s.color & 0x00FF00) >> 8, s.color & 0xFF)
+    data[..., :-1][colored_areas.T] = (
+        s.color >> 16,
+        (s.color & 0x00FF00) >> 8,
+        s.color & 0xFF,
+    )
 
     return Image.fromarray(data)
 
@@ -94,8 +98,14 @@ class MasterClueBoard(ClueBoard):
             {s: MasterRoom.CLOAK for s in list(MasterSuspect) if s in players},
             f'clue_images{os.sep}clue_masterboard.jpg',
             (50, 42, 28.375, 28.1875),
-            secret_pairs={MasterRoom.CONSERVATORY: MasterRoom.DRAWING, MasterRoom.KITCHEN: MasterRoom.LIBRARY},
-            entrance_exceptions=[(MasterRoom.KITCHEN, MoveDirection.UP), (MasterRoom.CONSERVATORY, MoveDirection.DOWN)],
+            secret_pairs={
+                MasterRoom.CONSERVATORY: MasterRoom.DRAWING,
+                MasterRoom.KITCHEN: MasterRoom.LIBRARY,
+            },
+            entrance_exceptions=[
+                (MasterRoom.KITCHEN, MoveDirection.UP),
+                (MasterRoom.CONSERVATORY, MoveDirection.DOWN),
+            ],
             full_block=False,
         )
 
